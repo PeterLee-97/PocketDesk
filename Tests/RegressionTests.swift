@@ -333,6 +333,17 @@ final class RegressionTests: XCTestCase {
         XCTAssertTrue(sink.handleHardwareKey(.keyboardA, modifiers: []))
         XCTAssertEqual(field.text, "한글a")
         XCTAssertTrue(panel.isHidden)
+        let clipboard = UIPasteboard.general.items
+        defer { UIPasteboard.general.items = clipboard }
+        XCTAssertTrue(sink.selectInputLanguage(.korean))
+        for code: UIKeyboardHIDUsage in [.keyboardG, .keyboardK, .keyboardS] {
+            XCTAssertTrue(sink.handleHardwareKey(code, modifiers: []))
+        }
+        UIPasteboard.general.string = "abc"
+        sink.paste(nil)
+        XCTAssertEqual(field.text, "한글a한abc")
+        XCTAssertTrue(sink.handleHardwareKey(.keyboardK, modifiers: []))
+        XCTAssertEqual(field.text, "한글a한abcㅏ", "Pasting must commit the previous syllable before further composition")
         toggle.sendActions(for: .primaryActionTriggered)
         XCTAssertFalse(panel.isHidden)
         desktop.setKeyFocus(DeskTextField(placeholder: "other"))

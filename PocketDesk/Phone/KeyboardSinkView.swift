@@ -278,18 +278,22 @@ final class KeyboardSinkView: UITextView, UITextViewDelegate {
     // MARK: Edit actions (menu / shortcut bar) → desktop
 
     override func paste(_ sender: Any?) {
+        commitComposition()
         DeskSession.shared.shortcut("v", modifiers: .command)
     }
 
     override func copy(_ sender: Any?) {
+        commitComposition()
         DeskSession.shared.shortcut("c", modifiers: .command)
     }
 
     override func cut(_ sender: Any?) {
+        commitComposition()
         DeskSession.shared.shortcut("x", modifiers: .command)
     }
 
     override func selectAll(_ sender: Any?) {
+        commitComposition()
         DeskSession.shared.shortcut("a", modifiers: .command)
     }
 
@@ -368,6 +372,7 @@ final class KeyboardSinkView: UITextView, UITextViewDelegate {
             clearBuffer()
             DeskSession.shared.specialKey(special, modifiers: modifiers)
         } else {
+            commitComposition()
             DeskSession.shared.shortcut(input.lowercased(), modifiers: modifiers)
         }
     }
