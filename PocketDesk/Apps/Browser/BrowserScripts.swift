@@ -726,6 +726,52 @@ enum BrowserScripts {
 })();
 """#
 
+    /// Keep desktop-user-agent pages tied to the actual window, rather than iPhone's 980px canvas.
+    static let viewport = #"""
+(function () {
+  function fit() {
+    if (!document.documentElement) { return; }
+    var meta = document.querySelector('meta[name="viewport"]');
+    if (!meta) { meta = document.createElement('meta'); meta.name = 'viewport'; (document.head || document.documentElement).appendChild(meta); }
+    var content = 'width=device-width, initial-scale=1';
+    if (meta.content !== content) { meta.content = content; }
+  }
+  fit();
+  document.addEventListener('DOMContentLoaded', fit, { once: true });
+})();
+"""#
+
+    static let media = #"""
+(function () {
+  function inlineVideos(root) {
+    if (root.tagName === 'VIDEO') { root.setAttribute('playsinline', ''); root.setAttribute('webkit-playsinline', ''); }
+    if (root.querySelectorAll) { root.querySelectorAll('video').forEach(function (v) { v.setAttribute('playsinline', ''); v.setAttribute('webkit-playsinline', ''); }); }
+  }
+  function started() {
+    try { window.webkit.messageHandlers.pocketdesk.postMessage({ type: 'mediaPlayback' }); } catch (e) {}
+  }
+  document.addEventListener('play', started, true);
+  document.addEventListener('playing', started, true);
+  function observe() {
+    inlineVideos(document);
+    new MutationObserver(function (changes) {
+      changes.forEach(function (change) { change.addedNodes.forEach(inlineVideos); });
+    }).observe(document.documentElement, { childList: true, subtree: true });
+  }
+  if (document.documentElement) { observe(); } else { document.addEventListener('DOMContentLoaded', observe, { once: true }); }
+  window.__pdEnableSound = function () {
+    started();
+    document.querySelectorAll('video,audio').forEach(function (m) {
+      if (!m.paused && !m.ended) { m.muted = false; m.defaultMuted = false; if (!m.volume) { m.volume = 1; } }
+    });
+    for (var i = 0; i < window.frames.length; i++) { window.frames[i].postMessage({ __pdEnableSound: true }, '*'); }
+  };
+  window.addEventListener('message', function (e) {
+    if (window !== window.top && e.source === window.parent && e.data && e.data.__pdEnableSound === true) { window.__pdEnableSound(); }
+  });
+})();
+"""#
+
     /// Page-world shim: iPhone WebKit has no element fullscreen, so videos would try to open the
     /// native player (which can't be controlled on a non-interactive display). Instead the element
     /// fills the viewport and the window goes fullscreen on the monitor.
@@ -794,7 +840,13 @@ enum BrowserScripts {
   define('webkitFullscreenEnabled', function () { return true; });
   define('fullscreen', function () { return !!current; });
   define('webkitIsFullScreen', function () { return !!current; });
-  window.__pdExitFullscreen = function () { exit(); };
+  window.__pdExitFullscreen = function () {
+    exit();
+    for (var i = 0; i < window.frames.length; i++) { window.frames[i].postMessage({ __pdExitFullscreen: true }, '*'); }
+  };
+  window.addEventListener('message', function (e) {
+    if (window !== window.top && e.source === window.parent && e.data && e.data.__pdExitFullscreen === true) { window.__pdExitFullscreen(); }
+  });
 })();
 """#
 }

@@ -2,7 +2,7 @@ import UIKit
 import WebKit
 
 /// Receives virtual-pointer events over the web page and hands them to the browser.
-final class WebPointerView: UIView, PointerTarget, ScrollTarget, HoverTarget, CursorProvider {
+final class WebPointerView: UIView, PointerTarget, ScrollTarget, HoverTarget, CursorProvider, ZoomTarget {
     weak var browser: BrowserContent?
 
     func pointerDown(_ event: PointerEvent) -> Bool { browser?.webPointerDown(event) ?? false }
@@ -12,6 +12,8 @@ final class WebPointerView: UIView, PointerTarget, ScrollTarget, HoverTarget, Cu
     func pointerMoved(_ event: PointerEvent) { browser?.webHover(event) }
     func pointerExited() { browser?.webPointerExited() }
     func cursor(at point: CGPoint) -> CursorKind? { browser?.webCursor ?? .arrow }
+    func zoom(by factor: CGFloat, event: PointerEvent) { browser?.pinchZoom(by: factor) }
+    func smartZoom(event: PointerEvent) { browser?.smartZoom() }
 }
 
 final class BrowserErrorView: UIView {
@@ -346,6 +348,22 @@ final class BrowserContent: AppContentView, WKNavigationDelegate, WKUIDelegate {
         desktop?.showToast("페이지 확대/축소: \(Int((tab.zoom * 100).rounded()))%", symbol: "plus.magnifyingglass")
     }
 
+    func pinchZoom(by factor: CGFloat) {
+        guard factor.isFinite, factor > 0, let tab = currentTab else { return }
+        tab.zoom = min(max(tab.zoom * factor, 0.3), 3)
+    }
+
+    func smartZoom() {
+        guard let tab = currentTab else { return }
+        tab.zoom = abs(tab.zoom - 1) < 0.05 ? 1.5 : 1
+    }
+
+    func swipePage(horizontal: CGFloat) {
+        guard let web = currentTab?.webView,
+              web.scrollView.contentSize.width <= web.bounds.width + 8 else { return }
+        if horizontal > 0 { web.goBack() } else { web.goForward() }
+    }
+
     private func addCurrentPageToDesktop() {
         guard let tab = currentTab, let url = tab.webView.url, !url.isFileURL else { return }
         let title = tab.displayTitle
@@ -364,6 +382,10 @@ final class BrowserContent: AppContentView, WKNavigationDelegate, WKUIDelegate {
             MenuItem(title: "축소", symbol: "minus.magnifyingglass", shortcut: "⌘−") { [weak self] in self?.zoom(by: -0.1) },
             MenuItem(title: "실제 크기 (현재 \(zoomPercent)%)", symbol: "1.magnifyingglass", shortcut: "⌘0") { [weak self] in self?.currentTab?.zoom = 1 },
             .separator,
+            MenuItem(title: "재생 중인 영상 소리 켜기", symbol: "speaker.wave.2.fill") { [weak self] in
+                PlaybackAudio.shared.activate()
+                self?.currentTab?.page("window.__pdEnableSound && window.__pdEnableSound()")
+            },
             MenuItem(title: "데스크톱 웹사이트", symbol: "desktopcomputer", isChecked: Settings.shared.desktopWebsites) { [weak self] in
                 Settings.shared.desktopWebsites.toggle()
                 self?.currentTab?.webView.reload()
@@ -406,6 +428,11 @@ final class BrowserContent: AppContentView, WKNavigationDelegate, WKUIDelegate {
     }
 
     override func interceptSpecialKey(_ key: SpecialKey, modifiers: KeyModifiers) -> Bool {
+        if modifiers == .option && (key == .left || key == .right),
+           desktop?.keyFocus?.acceptsTextInput != true {
+            if key == .left { currentTab?.webView.goBack() } else { currentTab?.webView.goForward() }
+            return true
+        }
         if key == .tab && modifiers.contains(.control) && tabs.count > 1 {
             let step = modifiers.contains(.shift) ? -1 : 1
             selectTab((selectedIndex + step + tabs.count) % tabs.count)
@@ -428,6 +455,8 @@ final class BrowserContent: AppContentView, WKNavigationDelegate, WKUIDelegate {
 
     func handleScriptMessage(_ body: [String: Any], from tab: BrowserTab) {
         guard let type = body["type"] as? String else { return }
+        if type == "mediaPlayback" { PlaybackAudio.shared.activate(); return }
+        guard tab === currentTab else { return }
         if type == "fullscreen" {
             setFullscreen(body["on"] as? Bool ?? false)
         }
@@ -698,7 +727,7 @@ final class BrowserContent: AppContentView, WKNavigationDelegate, WKUIDelegate {
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         tab(for: webView)?.errorMessage = nil
-        if tab(for: webView) === currentTab { updateChrome() }
+        if tab(for: webView) === currentTab { if isFullscreen { exitFullscreen() }; updateChrome() }
     }
 
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
@@ -712,7 +741,7 @@ final class BrowserContent: AppContentView, WKNavigationDelegate, WKUIDelegate {
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        if tab(for: webView) === currentTab { updateChrome() }
+        if tab(for: webView) === currentTab { if isFullscreen { exitFullscreen() }; updateChrome() }
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {

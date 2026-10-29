@@ -62,6 +62,16 @@ final class DeskSession {
         activeDesktop?.scroll(by: CGPoint(x: dx, y: dy))
     }
 
+    func zoom(by factor: CGFloat) { activeDesktop?.zoom(by: factor) }
+    func smartZoom() { activeDesktop?.smartZoom() }
+    func swipeWindows(horizontal: CGFloat, vertical: CGFloat) {
+        activeDesktop?.swipeWindows(horizontal: horizontal, vertical: vertical)
+    }
+    func swipePage(horizontal: CGFloat) {
+        guard let browser = activeDesktop?.activeWindow?.content as? BrowserContent else { return }
+        browser.swipePage(horizontal: horizontal)
+    }
+
     // MARK: Keyboard input (phone keyboard or Bluetooth keyboard via the key sink)
 
     func insertText(_ text: String) {

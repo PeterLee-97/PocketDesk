@@ -165,10 +165,6 @@ final class SettingsContent: AppContentView, PHPickerViewControllerDelegate {
         haptics.isOn = settings.haptics
         haptics.onChange = { Settings.shared.haptics = $0 }
 
-        let autoKeyboard = DeskToggle()
-        autoKeyboard.isOn = settings.autoShowKeyboard
-        autoKeyboard.onChange = { Settings.shared.autoShowKeyboard = $0 }
-
         let desktopSites = DeskToggle()
         desktopSites.isOn = settings.desktopWebsites
         desktopSites.onChange = { Settings.shared.desktopWebsites = $0 }
@@ -210,9 +206,6 @@ final class SettingsContent: AppContentView, PHPickerViewControllerDelegate {
                 SettingsRow(title: "트랙패드 · 마우스 속도", control: speed) { Theme.s(240) },
                 SettingsRow(title: "자연스러운 스크롤", detail: "손가락 방향으로 내용이 움직입니다", control: natural) { Theme.s(46) },
                 SettingsRow(title: "햅틱 피드백", detail: "클릭할 때 아이폰이 살짝 진동합니다", control: haptics) { Theme.s(46) },
-            ]),
-            (header("키보드"), [
-                SettingsRow(title: "입력란을 누르면 아이폰 키보드 표시", detail: "블루투스 키보드가 연결되어 있으면 표시하지 않습니다", control: autoKeyboard) { Theme.s(46) },
             ]),
             (header("인터넷"), [
                 SettingsRow(title: "데스크톱용 웹사이트", detail: "PC 화면용 페이지를 요청합니다", control: desktopSites) { Theme.s(46) },

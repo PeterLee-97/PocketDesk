@@ -11,3 +11,9 @@ Payload/
 
 # macOS
 .DS_Store
+
+# Local device setup and signing
+Config/LocalSigning.xcconfig
+SETUP_KO.md
+*.mobileprovision
+*.p12

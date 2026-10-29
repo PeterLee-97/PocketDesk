@@ -5,6 +5,8 @@ import UIKit
 /// - 1 finger: move · tap: click · double-tap: double-click
 /// - double-tap and hold (or long press), then move: drag
 /// - 2 fingers: scroll (with momentum) · 2-finger tap: right click
+/// - pinch: zoom · two-finger double tap: smart zoom
+/// - 3/4-finger swipe: switch windows / window list / show desktop
 /// - 3-finger tap: middle click
 final class TrackpadView: UIView {
     var onFirstUse: (() -> Void)?
@@ -18,6 +20,9 @@ final class TrackpadView: UIView {
     private var maxTouches = 0
     private var multiStartTime: TimeInterval = 0
     private var multiMoved: CGFloat = 0
+    private var multiGesture = MultiFingerGesture()
+    private var rightClickTimer: Timer?
+    private var lastTwoFingerTap: TimeInterval = 0
     private var lastTapTime: TimeInterval = 0
     private var lastTapPoint: CGPoint = .zero
     private var buttonHeld = false
@@ -92,6 +97,7 @@ final class TrackpadView: UIView {
                 multiMoved = 0
                 scrollVelocity = .zero
             }
+            multiGesture.begin(points: active.map { $0.location(in: self) })
             mode = .scrolling
             lastCentroid = centroid(active)
             lastScrollTime = touches.first?.timestamp ?? 0
@@ -116,22 +122,30 @@ final class TrackpadView: UIView {
             let gain = CGFloat(Settings.shared.pointerSpeed) * 1.5 * acceleration * sizeFactor
             DeskSession.shared.movePointer(dx: dx * gain, dy: dy * gain)
         case .scrolling:
-            guard !active.isEmpty else { return }
-            let center = centroid(active)
-            let dx = center.x - lastCentroid.x
-            let dy = center.y - lastCentroid.y
-            lastCentroid = center
-            multiMoved += hypot(dx, dy)
-            guard multiMoved > 6 else { return }
-            let direction: CGFloat = Settings.shared.naturalScrolling ? -1 : 1
-            let gain = 1.7 * min(sizeFactor, 1.6)
-            let delta = CGPoint(x: dx * direction * gain, y: dy * direction * gain)
-            DeskSession.shared.scroll(dx: delta.x, dy: delta.y)
-            let timestamp = touches.first?.timestamp ?? lastScrollTime
-            let dt = max(timestamp - lastScrollTime, 1.0 / 240)
-            lastScrollTime = timestamp
-            let velocity = CGPoint(x: delta.x / CGFloat(dt), y: delta.y / CGFloat(dt))
-            scrollVelocity = CGPoint(x: scrollVelocity.x * 0.6 + velocity.x * 0.4, y: scrollVelocity.y * 0.6 + velocity.y * 0.4)
+            guard active.count == maxTouches else { return }
+            let action = multiGesture.update(points: active.map { $0.location(in: self) })
+            multiMoved = multiGesture.travel
+            if multiMoved > 6 { rightClickTimer?.invalidate(); rightClickTimer = nil }
+            switch action {
+            case .pinch(let factor):
+                scrollVelocity = .zero
+                DeskSession.shared.zoom(by: factor)
+            case .swipe(let offset):
+                scrollVelocity = .zero
+                DeskSession.shared.swipeWindows(horizontal: offset.x, vertical: offset.y)
+                buzz()
+            case .scroll(let movement):
+                let direction: CGFloat = Settings.shared.naturalScrolling ? -1 : 1
+                let gain = 1.7 * min(sizeFactor, 1.6)
+                let delta = CGPoint(x: movement.x * direction * gain, y: movement.y * direction * gain)
+                DeskSession.shared.scroll(dx: delta.x, dy: delta.y)
+                let timestamp = touches.first?.timestamp ?? lastScrollTime
+                let dt = max(timestamp - lastScrollTime, 1.0 / 240)
+                lastScrollTime = timestamp
+                let velocity = CGPoint(x: delta.x / CGFloat(dt), y: delta.y / CGFloat(dt))
+                scrollVelocity = CGPoint(x: scrollVelocity.x * 0.6 + velocity.x * 0.4, y: scrollVelocity.y * 0.6 + velocity.y * 0.4)
+            case .none: break
+            }
         case .idle:
             break
         }
@@ -151,7 +165,7 @@ final class TrackpadView: UIView {
         case .pointing:
             guard let touch = primaryTouch, touches.contains(touch) else { break }
             cancelLongPress()
-            if !cancelled && touch.timestamp - touchStartTime < 0.3 && moved < 12 && maxTouches == 1 {
+            if !cancelled && touch.timestamp - touchStartTime < 0.45 && moved < 16 && maxTouches == 1 {
                 click(.left)
                 lastTapTime = touch.timestamp
                 lastTapPoint = touch.location(in: self)
@@ -172,11 +186,22 @@ final class TrackpadView: UIView {
             if remaining.isEmpty {
                 let timestamp = touches.first?.timestamp ?? 0
                 let duration = timestamp - multiStartTime
-                if !cancelled && maxTouches == 2 && multiMoved < 10 && duration < 0.35 {
-                    click(.right)
-                } else if !cancelled && maxTouches >= 3 && multiMoved < 16 && duration < 0.4 {
+                if !cancelled && maxTouches == 2 && multiGesture.isTap && duration < 0.35 {
+                    if timestamp - lastTwoFingerTap < 0.35 {
+                        rightClickTimer?.invalidate()
+                        rightClickTimer = nil
+                        DeskSession.shared.smartZoom()
+                        lastTwoFingerTap = 0
+                        buzz()
+                    } else {
+                        lastTwoFingerTap = timestamp
+                        rightClickTimer = Timer.scheduledTimer(withTimeInterval: 0.35, repeats: false) { [weak self] _ in self?.click(.right) }
+                    }
+                } else if !cancelled && maxTouches >= 3 && multiGesture.isTap && duration < 0.4 {
                     click(.middle)
-                } else if !cancelled && timestamp - lastScrollTime < 0.08 {
+                } else if !cancelled && multiGesture.isScroll && abs(multiGesture.offset.x) > 100 && abs(multiGesture.offset.x) > abs(multiGesture.offset.y) * 3 && duration < 0.7 {
+                    DeskSession.shared.swipePage(horizontal: multiGesture.offset.x)
+                } else if !cancelled && multiGesture.isScroll && timestamp - lastScrollTime < 0.08 {
                     startInertia()
                 }
                 mode = .idle
@@ -267,9 +292,73 @@ final class TrackpadView: UIView {
         super.willMove(toWindow: newWindow)
         if newWindow == nil {
             stopInertia()
+            rightClickTimer?.invalidate()
+            rightClickTimer = nil
             cancelLongPress()
             release()
         }
+    }
+}
+
+/// Decides once between scrolling, pinch and a window gesture; lifting one finger
+/// cannot turn a pinch into a click or a jump in the pointer.
+struct MultiFingerGesture {
+    enum Action { case none, scroll(CGPoint), pinch(CGFloat), swipe(CGPoint) }
+    private enum Kind { case pending, scroll, pinch, consumed }
+    private var kind = Kind.pending
+    private var count = 0
+    private var start = CGPoint.zero
+    private var last = CGPoint.zero
+    private var startSpan: CGFloat = 0
+    private var lastSpan: CGFloat = 0
+    private(set) var offset = CGPoint.zero
+    private(set) var travel: CGFloat = 0
+    var isTap: Bool { kind == .pending && travel < 10 }
+    var isScroll: Bool { kind == .scroll }
+
+    mutating func begin(points: [CGPoint]) {
+        self = MultiFingerGesture()
+        count = points.count
+        start = Self.center(points)
+        last = start
+        startSpan = Self.span(points)
+        lastSpan = startSpan
+    }
+
+    mutating func update(points: [CGPoint]) -> Action {
+        guard points.count == count, count >= 2 else { return .none }
+        let center = Self.center(points), span = Self.span(points)
+        let delta = CGPoint(x: center.x - last.x, y: center.y - last.y)
+        offset = CGPoint(x: center.x - start.x, y: center.y - start.y)
+        let displacement = hypot(offset.x, offset.y)
+        travel = max(travel, max(displacement, abs(span - startSpan)))
+        defer { last = center; lastSpan = span }
+        if count >= 3 {
+            if kind == .pending && displacement > 45 { kind = .consumed; return .swipe(offset) }
+            return .none
+        }
+        var justRecognized = false
+        if kind == .pending {
+            let pinchTravel = abs(span - startSpan)
+            if startSpan > 24 && pinchTravel > 8 && pinchTravel > displacement * 1.25 {
+                kind = .pinch; justRecognized = true
+            } else if displacement > 7 { kind = .scroll; justRecognized = true }
+        }
+        switch kind {
+        case .pinch: return .pinch(span / max(1, justRecognized ? startSpan : lastSpan))
+        case .scroll: return .scroll(justRecognized ? offset : delta)
+        default: return .none
+        }
+    }
+
+    private static func center(_ points: [CGPoint]) -> CGPoint {
+        guard !points.isEmpty else { return .zero }
+        return CGPoint(x: points.reduce(0) { $0 + $1.x } / CGFloat(points.count),
+                       y: points.reduce(0) { $0 + $1.y } / CGFloat(points.count))
+    }
+    private static func span(_ points: [CGPoint]) -> CGFloat {
+        guard points.count == 2 else { return 0 }
+        return hypot(points[0].x - points[1].x, points[0].y - points[1].y)
     }
 }
 

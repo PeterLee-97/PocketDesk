@@ -1,0 +1,4 @@
+// Shared defaults; personal signing configuration stays on this Mac.
+POCKETDESK_BUNDLE_ID = com.yourname.pocketdesk
+POCKETDESK_TEAM =
+#include? "LocalSigning.xcconfig"

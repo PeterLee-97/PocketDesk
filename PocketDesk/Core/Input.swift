@@ -101,6 +101,11 @@ protocol ScrollTarget: AnyObject {
     func scroll(by delta: CGPoint, event: PointerEvent) -> Bool
 }
 
+protocol ZoomTarget: AnyObject {
+    func zoom(by factor: CGFloat, event: PointerEvent)
+    func smartZoom(event: PointerEvent)
+}
+
 protocol CursorProvider: AnyObject {
     /// `point` is in the receiver's coordinate space. Return nil to defer to the superview.
     func cursor(at point: CGPoint) -> CursorKind?

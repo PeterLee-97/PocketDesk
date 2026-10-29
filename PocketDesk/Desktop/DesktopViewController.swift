@@ -96,6 +96,8 @@ final class DesktopViewController: UIViewController {
     private let taskbar = TaskbarView()
     private let overlayLayer = PassthroughView()
     private let cursorView = CursorView()
+    let fullscreenExitButton = DeskButton(symbol: "arrow.down.right.and.arrow.up.left", title: "전체 화면 나가기")
+    private var desktopHiddenWindows: [DeskWindow] = []
 
     private(set) var windows: [DeskWindow] = []
     /// Most recently focused first.
@@ -136,8 +138,15 @@ final class DesktopViewController: UIViewController {
         rootView.desktop = self
         rootView.backgroundColor = .black
         rootView.clipsToBounds = true
-        for layerView in [wallpaperView, iconsView, windowLayer, taskbar, overlayLayer, cursorView] as [UIView] {
+        for layerView in [wallpaperView, iconsView, windowLayer, taskbar, overlayLayer, fullscreenExitButton, cursorView] as [UIView] {
             rootView.addSubview(layerView)
+        }
+        fullscreenExitButton.isHidden = true
+        fullscreenExitButton.normalBackground = UIColor(white: 0.12, alpha: 0.95)
+        fullscreenExitButton.onTap = { [weak self] in
+            guard let self, let window = self.windows.first(where: { $0.isFullscreen }) else { return }
+            window.content.exitFullscreen()
+            self.setWindowFullscreen(window, false)
         }
         snapPreview.isUserInteractionEnabled = false
         snapPreview.backgroundColor = UIColor(white: 1, alpha: 0.12)
@@ -207,6 +216,7 @@ final class DesktopViewController: UIViewController {
         iconsView.frame = workArea
         windowLayer.frame = bounds
         overlayLayer.frame = bounds
+        fullscreenExitButton.frame = CGRect(x: max(0, bounds.width - Theme.s(196)), y: Theme.s(10), width: Theme.s(184), height: Theme.s(38))
         for dialog in dialogs { dialog.frame = bounds }
         startMenu?.frame = startMenuFrame()
     }
@@ -288,6 +298,7 @@ final class DesktopViewController: UIViewController {
     func pointerButton(_ button: PointerButton, pressed: Bool) {
         if pressed {
             guard pressedButton == nil else { return }
+            DeskSession.shared.phone?.finishKeyboardComposition()
             pressedButton = button
             let now = CACurrentMediaTime()
             let distance = hypot(cursorLocation.x - lastClickLocation.x, cursorLocation.y - lastClickLocation.y)
@@ -344,6 +355,35 @@ final class DesktopViewController: UIViewController {
             if let target = current as? ScrollTarget, target.scroll(by: delta, event: event) { return }
             if let scrollView = current as? UIScrollView, scrollView.isScrollEnabled, scrollView.deskScroll(by: delta) { return }
             view = current.superview
+        }
+    }
+
+    private var zoomTarget: ZoomTarget? {
+        rootView.hitTest(cursorLocation, with: nil)?.firstAncestor(ofType: ZoomTarget.self)
+    }
+
+    func zoom(by factor: CGFloat) {
+        zoomTarget?.zoom(by: factor, event: makeEvent(button: .left))
+    }
+
+    func smartZoom() { zoomTarget?.smartZoom(event: makeEvent(button: .left)) }
+
+    func swipeWindows(horizontal: CGFloat, vertical: CGFloat) {
+        if abs(horizontal) > abs(vertical) {
+            cycleWindows(backward: horizontal > 0)
+        } else if vertical < 0 {
+            let items = focusOrder.map { window in
+                MenuItem(title: window.displayTitle, symbol: window.kind.iconStyle.symbol) { [weak self, weak window] in
+                    if let window { self?.focus(window) }
+                }
+            }
+            showContextMenu(items, at: cursorLocation)
+        } else if desktopHiddenWindows.isEmpty {
+            desktopHiddenWindows = windows.filter { !$0.isMinimized }
+            minimizeAll()
+        } else {
+            for window in desktopHiddenWindows.reversed() where windows.contains(where: { $0 === window }) { focus(window) }
+            desktopHiddenWindows.removeAll()
         }
     }
 
@@ -639,6 +679,11 @@ final class DesktopViewController: UIViewController {
     }
 
     func restoreSize(_ window: DeskWindow) {
+        if window.isFullscreen {
+            window.content.exitFullscreen()
+            setWindowFullscreen(window, false)
+            return
+        }
         let target = window.restoreFrame ?? initialFrame(for: window.kind)
         window.isMaximized = false
         window.snap = .none
@@ -735,6 +780,8 @@ final class DesktopViewController: UIViewController {
             focus(window)
             window.frame = rootView.bounds
             taskbar.isHidden = true
+            fullscreenExitButton.isHidden = false
+            layoutDesktop()
         } else {
             guard let restore = window.fullscreenRestore else { return }
             window.fullscreenRestore = nil
@@ -743,6 +790,8 @@ final class DesktopViewController: UIViewController {
             window.snap = restore.snap
             window.frame = restore.frame
             taskbar.isHidden = windows.contains { $0.isFullscreen }
+            fullscreenExitButton.isHidden = !taskbar.isHidden
+            fitWindowToWorkArea(window)
         }
     }
 

@@ -34,6 +34,8 @@ enum BrowserEnvironment {
     /// configuration) never register the message handler twice.
     static let contentController: WKUserContentController = {
         let controller = WKUserContentController()
+        controller.addUserScript(WKUserScript(source: BrowserScripts.viewport, injectionTime: .atDocumentStart, forMainFrameOnly: true, in: .page))
+        controller.addUserScript(WKUserScript(source: BrowserScripts.media, injectionTime: .atDocumentStart, forMainFrameOnly: false, in: .page))
         controller.addUserScript(WKUserScript(source: BrowserScripts.bridge, injectionTime: .atDocumentStart, forMainFrameOnly: false, in: world))
         controller.addUserScript(WKUserScript(source: BrowserScripts.fullscreen, injectionTime: .atDocumentStart, forMainFrameOnly: false, in: .page))
         controller.add(BrowserMessageRouter.shared, contentWorld: .page, name: BrowserMessageRouter.name)
@@ -150,7 +152,7 @@ final class BrowserTab: NSObject {
     }
 
     func applyZoom() {
-        webView.pageZoom = Theme.scale * zoom
+        webView.pageZoom = zoom
     }
 
     var displayTitle: String {

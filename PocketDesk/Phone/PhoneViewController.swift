@@ -1,4 +1,6 @@
 import UIKit
+import AVKit
+import MediaPlayer
 
 /// The phone screen: a welcome/instructions page until a display is connected, then a
 /// trackpad + keyboard controller for the desktop on the external display.
@@ -15,6 +17,14 @@ final class PhoneViewController: UIViewController {
     private let keySink = KeyboardSinkView()
     private lazy var accessoryBar = KeyboardAccessoryBar(sink: keySink)
     private var keyboardButton: UIButton?
+    private var languageButton: UIButton?
+    private let onscreenKeyboard = OnscreenKeyboardView()
+    private let suppressedSystemKeyboard = UIView(frame: .zero)
+    private var normalClickBottom: NSLayoutConstraint!
+    private var panelClickBottom: NSLayoutConstraint!
+    private var panelHeight: NSLayoutConstraint!
+    private var clickHeight: NSLayoutConstraint!
+    private weak var lastKeyTarget: AnyObject?
 
     private let dimOverlay = UIView()
     private let dimTrackpad = TrackpadView()
@@ -22,7 +32,6 @@ final class PhoneViewController: UIViewController {
 
     private let sceneAccessory = ExternalDisplayAccessory()
     private var keyboardRequested = false
-    private var keyboardAutoShown = false
     private var isDimmed = false
     private var savedBrightness: CGFloat = 0.6
 
@@ -34,6 +43,10 @@ final class PhoneViewController: UIViewController {
 
         view.addSubview(keySink)
         accessoryBar.onHide = { [weak self] in self?.setKeyboard(requested: false) }
+        accessoryBar.onToggleLanguage = { [weak self] in self?.toggleInputLanguage() }
+        keySink.onToggleInputLanguage = { [weak self] in self?.toggleInputLanguage() }
+        keySink.inputView = suppressedSystemKeyboard
+        keySink.onInputLanguageChange = { [weak self] in self?.updateInputLanguageButton() }
 
         welcome.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(welcome)
@@ -121,13 +134,30 @@ final class PhoneViewController: UIViewController {
         })
         let keyboard = makeToolButton("키보드", symbol: "keyboard", action: UIAction { [weak self] _ in
             guard let self else { return }
-            self.setKeyboard(requested: !self.keySink.isFirstResponder)
+            self.setKeyboard(requested: !self.keyboardRequested)
         })
         keyboardButton = keyboard
+        keyboard.accessibilityIdentifier = "keyboard.show"
+        let language = makeToolButton("한/영", symbol: "globe", action: UIAction { [weak self] _ in
+            self?.toggleInputLanguage()
+        })
+        language.accessibilityIdentifier = "keyboard.language.toolbar"
+        language.accessibilityLabel = "한영 전환"
+        languageButton = language
         let dim = makeToolButton("어둡게", symbol: "moon.fill", action: UIAction { [weak self] _ in
             self?.setDimmed(true)
         })
         let more = makeToolButton("더보기", symbol: "ellipsis.circle", menu: UIMenu(children: [
+            UIAction(title: "전체 화면 나가기", image: UIImage(systemName: "arrow.down.right.and.arrow.up.left")) { _ in
+                guard let desktop = DeskSession.shared.desktop,
+                      let window = desktop.windows.first(where: { $0.isFullscreen }) else { return }
+                window.content.exitFullscreen()
+                desktop.setWindowFullscreen(window, false)
+            },
+            UIAction(title: "소리 출력 · 음량", image: UIImage(systemName: "speaker.wave.2.fill")) { [weak self] _ in
+                PlaybackAudio.shared.activate()
+                self?.present(AudioOutputViewController(), animated: true)
+            },
             UIAction(title: "포인터를 화면 가운데로", image: UIImage(systemName: "scope")) { _ in
                 DeskSession.shared.desktop?.centerPointer()
             },
@@ -142,7 +172,8 @@ final class PhoneViewController: UIViewController {
         buttonRow.distribution = .fillEqually
         buttonRow.spacing = 6
         buttonRow.translatesAutoresizingMaskIntoConstraints = false
-        for button in [start, windows, escape, keyboard, dim, more] { buttonRow.addArrangedSubview(button) }
+        for button in [start, windows, escape, keyboard, language, dim, more] { buttonRow.addArrangedSubview(button) }
+        updateInputLanguageButton()
         controller.addSubview(buttonRow)
 
         trackpad.backgroundColor = UIColor(white: 1, alpha: 0.06)
@@ -152,7 +183,7 @@ final class PhoneViewController: UIViewController {
         trackpad.translatesAutoresizingMaskIntoConstraints = false
         trackpad.onFirstUse = { [weak self] in self?.fadeHint() }
         controller.addSubview(trackpad)
-        hintLabel.text = "한 손가락: 포인터 이동 · 탭: 클릭\n두 손가락: 스크롤 · 두 손가락 탭: 오른쪽 클릭\n두 번 탭한 채로 움직이기: 드래그"
+        hintLabel.text = "한 손가락: 포인터 이동 · 탭: 클릭\n두 손가락: 스크롤 · 오므리기/벌리기: 확대/축소\n세 손가락: 창 전환 · 길게 누른 채 이동: 드래그"
         hintLabel.numberOfLines = 0
         hintLabel.textAlignment = .center
         hintLabel.font = .systemFont(ofSize: 13)
@@ -169,7 +200,16 @@ final class PhoneViewController: UIViewController {
         clickRow.addArrangedSubview(TrackpadButton(title: "오른쪽 클릭", button: .right))
         controller.addSubview(clickRow)
 
+        onscreenKeyboard.translatesAutoresizingMaskIntoConstraints = false
+        onscreenKeyboard.isHidden = true
+        onscreenKeyboard.onKey = { [weak self] key in self?.handlePanelKey(key) }
+        controller.addSubview(onscreenKeyboard)
+
         let guide = controller.safeAreaLayoutGuide
+        normalClickBottom = clickRow.bottomAnchor.constraint(equalTo: controller.keyboardLayoutGuide.topAnchor, constant: -8)
+        panelClickBottom = clickRow.bottomAnchor.constraint(equalTo: onscreenKeyboard.topAnchor, constant: -8)
+        panelHeight = onscreenKeyboard.heightAnchor.constraint(equalToConstant: 260)
+        clickHeight = clickRow.heightAnchor.constraint(equalToConstant: 58)
         NSLayoutConstraint.activate([
             header.topAnchor.constraint(equalTo: guide.topAnchor, constant: 6),
             header.leadingAnchor.constraint(equalTo: guide.leadingAnchor, constant: 18),
@@ -202,9 +242,45 @@ final class PhoneViewController: UIViewController {
 
             clickRow.leadingAnchor.constraint(equalTo: guide.leadingAnchor, constant: 12),
             clickRow.trailingAnchor.constraint(equalTo: guide.trailingAnchor, constant: -12),
-            clickRow.heightAnchor.constraint(equalToConstant: 58),
-            clickRow.bottomAnchor.constraint(equalTo: controller.keyboardLayoutGuide.topAnchor, constant: -8),
+            clickHeight,
+            normalClickBottom,
+            onscreenKeyboard.leadingAnchor.constraint(equalTo: guide.leadingAnchor, constant: 8),
+            onscreenKeyboard.trailingAnchor.constraint(equalTo: guide.trailingAnchor, constant: -8),
+            onscreenKeyboard.bottomAnchor.constraint(equalTo: guide.bottomAnchor, constant: -8),
+            panelHeight,
         ])
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        layoutKeyboardPanel()
+    }
+
+    private func layoutKeyboardPanel() {
+        guard panelHeight != nil else { return }
+        let visible = !onscreenKeyboard.isHidden
+        let compact = visible && view.bounds.width > view.bounds.height
+        let available = controller.safeAreaLayoutGuide.layoutFrame.maxY - buttonRow.frame.maxY - 18
+        let height = max(0, min(260, available - (compact ? 16 : 100)))
+        if abs(panelHeight.constant - height) > 0.1 { panelHeight.constant = height }
+        let clickRowHeight: CGFloat = compact ? 0 : 58
+        if clickHeight.constant != clickRowHeight { clickHeight.constant = clickRowHeight }
+        trackpad.isHidden = compact
+        clickRow.isHidden = compact
+    }
+
+    func finishKeyboardComposition() { keySink.commitComposition() }
+
+    private func handlePanelKey(_ key: OnscreenKeyboardView.Key) {
+        switch key {
+        case .text(let value): keySink.insertPanelText(value, language: onscreenKeyboard.language)
+        case .delete: keySink.deletePanelBackward()
+        case .enter, .tab:
+            keySink.commitComposition()
+            DeskSession.shared.specialKey(key == .enter ? .enter : .tab, modifiers: [])
+        case .language: toggleInputLanguage()
+        case .hide: setKeyboard(requested: false)
+        }
     }
 
     private func buildDimOverlay() {
@@ -276,7 +352,6 @@ final class PhoneViewController: UIViewController {
         if !connected {
             setDimmed(false)
             keyboardRequested = false
-            keyboardAutoShown = false
         }
         updateKeyboard()
         setNeedsUpdateOfHomeIndicatorAutoHidden()
@@ -285,6 +360,7 @@ final class PhoneViewController: UIViewController {
     }
 
     func phoneDidBecomeActive() {
+        PlaybackAudio.shared.activate()
         if isDimmed, let screen = view.window?.windowScene?.screen { screen.brightness = 0.02 }
         updateKeyboard()
     }
@@ -299,6 +375,10 @@ final class PhoneViewController: UIViewController {
 
     func keyFocusDidChange() {
         let target = DeskSession.shared.keyFocus
+        if lastKeyTarget !== (target as AnyObject?) {
+            keySink.clearBuffer()
+            lastKeyTarget = target
+        }
         if let target, !target.inputDescription.isEmpty {
             focusLabel.text = "⌨︎ " + target.inputDescription
         } else {
@@ -309,27 +389,76 @@ final class PhoneViewController: UIViewController {
             keySink.keyboardType = type
             if keySink.isFirstResponder { keySink.reloadInputViews() }
         }
-        if Settings.shared.autoShowKeyboard && !HardwareInput.shared.hasKeyboard && !keyboardRequested {
-            keyboardAutoShown = target?.acceptsTextInput ?? false
+        updateKeyboard()
+        updateInputLanguageButton()
+    }
+
+    private var focusedMacScreen: RemoteScreenView? {
+        guard let screen = DeskSession.shared.keyFocus as? RemoteScreenView,
+              !screen.mapCommandToControl else { return nil }
+        return screen
+    }
+
+    private func toggleInputLanguage() {
+        if let screen = focusedMacScreen {
+            // The Mac's input source composes the characters. Avoid composing the same keys
+            // once on iOS and again on the remote Mac.
+            guard keySink.selectInputLanguage(.english) else { showMissingKeyboard(.english); return }
+            screen.toggleMacInputLanguage()
+        } else {
+            let next = keySink.inputLanguage?.next ?? .korean
+            guard keySink.selectInputLanguage(next) else { showMissingKeyboard(next); return }
         }
         updateKeyboard()
+        updateInputLanguageButton()
+    }
+
+    private func updateInputLanguageButton() {
+        let description = focusedMacScreen != nil ? "원격 Mac" : (keySink.inputLanguage?.title ?? "시스템")
+        var configuration = languageButton?.configuration
+        configuration?.image = nil
+        configuration?.subtitle = description
+        configuration?.subtitleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
+            var outgoing = incoming
+            outgoing.font = UIFont.systemFont(ofSize: 10, weight: .semibold)
+            return outgoing
+        }
+        configuration?.baseBackgroundColor = keySink.inputLanguage == .korean && focusedMacScreen == nil
+            ? UIColor(hex: 0x285AA4) : UIColor(white: 1, alpha: 0.1)
+        languageButton?.configuration = configuration
+        languageButton?.accessibilityValue = description
+        languageButton?.accessibilityHint = focusedMacScreen != nil ? "Mac의 입력 소스를 전환합니다" : "한국어와 영어를 전환합니다"
+        onscreenKeyboard.language = focusedMacScreen != nil ? .english : (keySink.inputLanguage ?? .english)
+    }
+
+    private func showMissingKeyboard(_ language: KeyboardSinkView.InputLanguage) {
+        let alert = UIAlertController(title: "\(language.title) 키보드가 필요합니다",
+            message: "아이폰 설정 → 일반 → 키보드 → 키보드 → 새로운 키보드 추가에서 \(language.title)를 추가한 뒤 한/영 버튼을 다시 눌러주세요.", preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "확인", style: .default))
+        present(alert, animated: true)
     }
 
     private func setKeyboard(requested: Bool) {
+        keySink.commitComposition()
         keyboardRequested = requested
-        if !requested { keyboardAutoShown = false }
         updateKeyboard()
     }
 
     private func updateKeyboard() {
         let connected = DeskSession.shared.isDisplayConnected
-        let hardware = HardwareInput.shared.hasKeyboard
-        let accessory: UIView? = hardware ? nil : accessoryBar
-        if keySink.inputAccessoryView !== accessory {
-            keySink.inputAccessoryView = accessory
-            if keySink.isFirstResponder { keySink.reloadInputViews() }
+        let showPanel = connected && !isDimmed && keyboardRequested
+        onscreenKeyboard.isHidden = !showPanel
+        if showPanel {
+            normalClickBottom.isActive = false
+            panelClickBottom.isActive = true
+        } else {
+            panelClickBottom.isActive = false
+            normalClickBottom.isActive = true
         }
-        let wantsFocus = connected && !isDimmed && (hardware || keyboardRequested || keyboardAutoShown)
+        layoutKeyboardPanel()
+        // Keep hardware/IME focus without ever requesting the system's onscreen keyboard.
+        // Only the explicit toolbar button controls the app's phone keyboard panel.
+        let wantsFocus = connected && !isDimmed && presentedViewController == nil
         if wantsFocus && !keySink.isFirstResponder {
             keySink.clearBuffer()
             keySink.becomeFirstResponder()
@@ -337,8 +466,9 @@ final class PhoneViewController: UIViewController {
             keySink.resignFirstResponder()
         }
         var configuration = keyboardButton?.configuration
-        configuration?.baseBackgroundColor = (keySink.isFirstResponder && !hardware) ? UIColor(hex: 0x4A8FFF) : UIColor(white: 1, alpha: 0.1)
+        configuration?.baseBackgroundColor = showPanel ? UIColor(hex: 0x4A8FFF) : UIColor(white: 1, alpha: 0.1)
         keyboardButton?.configuration = configuration
+        keyboardButton?.accessibilityValue = showPanel ? "열림" : "닫힘"
     }
 
     private func setDimmed(_ dimmed: Bool) {
@@ -467,5 +597,42 @@ private final class WelcomeView: UIView {
     func update(openWindows: Int) {
         windowsLabel.text = openWindows > 0 ? "열려 있던 창 \(openWindows)개는 다시 연결하면 그대로 복원됩니다." : nil
         windowsLabel.isHidden = openWindows == 0
+    }
+}
+
+/// Uses the system's output selector, so HDMI, Bluetooth and AirPlay routes stay user-controlled.
+final class AudioOutputViewController: UIViewController {
+    private let output = UILabel()
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .systemBackground
+        if let sheet = sheetPresentationController { sheet.detents = [.medium()]; sheet.prefersGrabberVisible = true }
+        let title = UILabel()
+        title.text = "소리 출력 · 음량"
+        title.font = .preferredFont(forTextStyle: .title2)
+        output.numberOfLines = 0
+        let routes = AVRoutePickerView()
+        routes.accessibilityLabel = "소리 출력 장치 선택"
+        routes.prioritizesVideoDevices = false
+        let volume = MPVolumeView()
+        let hint = UILabel()
+        hint.numberOfLines = 0
+        hint.text = "아래 출력 버튼에서 사용할 장치를 선택하세요. HDMI로 연결했다면 모니터·TV의 스피커와 음량도 확인하세요. 영상 자체가 음소거된 경우 브라우저 메뉴의 ‘재생 중인 영상 소리 켜기’를 누르세요."
+        hint.font = .preferredFont(forTextStyle: .footnote)
+        hint.textColor = .secondaryLabel
+        let stack = UIStackView(arrangedSubviews: [title, output, routes, volume, hint])
+        stack.axis = .vertical; stack.spacing = 20; stack.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 24),
+            stack.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -24),
+            stack.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 32),
+            routes.heightAnchor.constraint(equalToConstant: 44), volume.heightAnchor.constraint(equalToConstant: 32)
+        ])
+        NotificationCenter.default.addObserver(self, selector: #selector(updateOutput), name: AVAudioSession.routeChangeNotification, object: nil)
+        updateOutput()
+    }
+    @objc private func updateOutput() {
+        output.text = "현재 출력: " + AVAudioSession.sharedInstance().currentRoute.outputs.map(\.portName).joined(separator: ", ")
     }
 }

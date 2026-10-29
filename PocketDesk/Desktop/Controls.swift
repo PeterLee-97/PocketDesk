@@ -681,6 +681,8 @@ struct DeskListItem {
 
 /// Vertical list with selection, hover, double-click and context menus.
 final class DeskListView: UIScrollView, PointerTarget, HoverTarget {
+    var activatesOnSingleClick = false
+    private var pressedIndex: Int?
     var items: [DeskListItem] = [] { didSet { rebuild() } }
     var selectedIndex: Int? { didSet { updateRows() } }
     var rowHeight: CGFloat = 34 { didSet { setNeedsLayout() } }
@@ -763,6 +765,7 @@ final class DeskListView: UIScrollView, PointerTarget, HoverTarget {
 
     func pointerDown(_ event: PointerEvent) -> Bool {
         let index = self.index(at: event.location(in: self))
+        pressedIndex = event.button == .left ? index : nil
         if event.button == .right {
             if let index {
                 selectedIndex = index
@@ -775,11 +778,19 @@ final class DeskListView: UIScrollView, PointerTarget, HoverTarget {
         if let index {
             selectedIndex = index
             onSelect?(index)
-            if event.clickCount == 2 { onActivate?(index) }
+            if !activatesOnSingleClick && event.clickCount == 2 { onActivate?(index) }
         } else {
             selectedIndex = nil
         }
         return true
+    }
+
+    func pointerUp(_ event: PointerEvent) {
+        defer { pressedIndex = nil }
+        guard activatesOnSingleClick, event.button == .left, event.clickCount == 1,
+              let index = pressedIndex, self.index(at: event.location(in: self)) == index,
+              items.indices.contains(index) else { return }
+        onActivate?(index)
     }
 
     func pointerMoved(_ event: PointerEvent) {

@@ -64,6 +64,7 @@ final class FilesContent: AppContentView, KeyInputTarget, UIDocumentPickerDelega
         list.rowHeight = 34
         list.emptyText = "이 폴더는 비어 있습니다.\niPhone에서 가져오기를 누르거나 iOS '파일' 앱의 'PocketDesk' 폴더에 파일을 넣으세요."
         list.onActivate = { [weak self] index in self?.activate(index) }
+        list.activatesOnSingleClick = true
         list.onSelect = { [weak self] _ in self?.updateStatus() }
         list.onContextMenu = { [weak self] index, event in self?.showMenu(for: index, at: event.location) }
         addSubview(list)

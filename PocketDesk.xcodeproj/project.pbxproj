@@ -5,6 +5,21 @@
 	};
 	objectVersion = 56;
 	objects = {
+        FEE200000000000000000001 = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config/Signing.xcconfig; sourceTree = SOURCE_ROOT; };
+        FEE100000000000000000001 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnscreenKeyboardView.swift; sourceTree = "<group>"; };
+        FEE100000000000000000002 = {isa = PBXBuildFile; fileRef = FEE100000000000000000001; };
+        FEE000000000000000000002 = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = PocketDeskTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+        FEE000000000000000000003 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/RegressionTests.swift; sourceTree = SOURCE_ROOT; };
+        FEE000000000000000000004 = {isa = PBXBuildFile; fileRef = FEE000000000000000000003; };
+        FEE000000000000000000005 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (FEE000000000000000000004,); runOnlyForDeploymentPostprocessing = 0; };
+        FEE000000000000000000006 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+        FEE000000000000000000008 = {isa = XCBuildConfiguration; baseConfigurationReference = FEE200000000000000000001; buildSettings = { BUNDLE_LOADER = "$(TEST_HOST)"; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; PRODUCT_BUNDLE_IDENTIFIER = "$(POCKETDESK_BUNDLE_ID).tests"; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2"; TEST_HOST = "$(BUILT_PRODUCTS_DIR)/PocketDesk.app/PocketDesk"; TEST_TARGET_NAME = PocketDesk; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@loader_path/Frameworks"); FRAMEWORK_SEARCH_PATHS = ("$(inherited)", "$(PLATFORM_DIR)/Developer/Library/Frameworks"); }; name = Debug; };
+        FEE000000000000000000009 = {isa = XCBuildConfiguration; baseConfigurationReference = FEE200000000000000000001; buildSettings = { BUNDLE_LOADER = "$(TEST_HOST)"; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; PRODUCT_BUNDLE_IDENTIFIER = "$(POCKETDESK_BUNDLE_ID).tests"; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2"; TEST_HOST = "$(BUILT_PRODUCTS_DIR)/PocketDesk.app/PocketDesk"; TEST_TARGET_NAME = PocketDesk; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@loader_path/Frameworks"); FRAMEWORK_SEARCH_PATHS = ("$(inherited)", "$(PLATFORM_DIR)/Developer/Library/Frameworks"); }; name = Release; };
+        FEE000000000000000000007 = {isa = XCConfigurationList; buildConfigurations = (FEE000000000000000000008, FEE000000000000000000009,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+        FEE00000000000000000000A = {isa = PBXContainerItemProxy; containerPortal = 46F86FAA6BBF9AC94A7E4595; proxyType = 1; remoteGlobalIDString = 42AEFBAE01D2DFD981F7DA7D; remoteInfo = PocketDesk; };
+        FEE00000000000000000000B = {isa = PBXTargetDependency; target = 42AEFBAE01D2DFD981F7DA7D; targetProxy = FEE00000000000000000000A; };
+        FEE000000000000000000001 = {isa = PBXNativeTarget; buildConfigurationList = FEE000000000000000000007; buildPhases = (FEE000000000000000000005, FEE000000000000000000006,); buildRules = (); dependencies = (FEE00000000000000000000B,); name = PocketDeskTests; productName = PocketDeskTests; productReference = FEE000000000000000000002; productType = "com.apple.product-type.bundle.unit-test"; };
+
 
 /* Begin PBXBuildFile section */
 		0393136A5E3D23B160DE09DE /* NotesContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3995B1B6C147DB7A8286BA6C /* NotesContent.swift */; };
@@ -89,20 +104,34 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
-		4EAE695AD1F489F78EA3E1C6 = {
+		0FB9A32B111B5D4CA1E5B906 /* Phone */ = {
 			isa = PBXGroup;
 			children = (
-				4BE04CCD89C070B1CA3381ED /* PocketDesk */,
-				1D5F545FBA1B7116946BB4C6 /* Products */,
+                FEE100000000000000000001,
+				1DB4BB6B8AA2833E14950930 /* HardwareInput.swift */,
+				8056FAA889836DFA97839CE6 /* KeyboardSinkView.swift */,
+				52B441A2A4C0DD4481383EB1 /* PhoneViewController.swift */,
+				FC6B33471F7EE41F4F709FA7 /* TrackpadView.swift */,
 			);
+			path = Phone;
 			sourceTree = "<group>";
 		};
 		1D5F545FBA1B7116946BB4C6 /* Products */ = {
 			isa = PBXGroup;
 			children = (
+                FEE000000000000000000002,
 				F5BF48AA40CAD7891EB709FC /* PocketDesk.app */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		267AEBE1BACFD8AB573455B5 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				187B6CA45CDA678842C6DA9B /* AppDelegate.swift */,
+				EBED2D2BD589C21E6C0184C2 /* SceneDelegates.swift */,
+			);
+			path = App;
 			sourceTree = "<group>";
 		};
 		4BE04CCD89C070B1CA3381ED /* PocketDesk */ = {
@@ -119,29 +148,13 @@
 			path = PocketDesk;
 			sourceTree = "<group>";
 		};
-		267AEBE1BACFD8AB573455B5 /* App */ = {
+		4EAE695AD1F489F78EA3E1C6 = {
 			isa = PBXGroup;
 			children = (
-				187B6CA45CDA678842C6DA9B /* AppDelegate.swift */,
-				EBED2D2BD589C21E6C0184C2 /* SceneDelegates.swift */,
+                FEE000000000000000000003,
+				4BE04CCD89C070B1CA3381ED /* PocketDesk */,
+				1D5F545FBA1B7116946BB4C6 /* Products */,
 			);
-			path = App;
-			sourceTree = "<group>";
-		};
-		8E2459B75B59FE35180D5B27 /* Apps */ = {
-			isa = PBXGroup;
-			children = (
-				FCF6123DE1B6327ACFB24065 /* RemoteDesktop */,
-				56C1C36EF61AC1288D7D5707 /* Browser */,
-				080B69F54095EA2A83E9B75B /* AppKind.swift */,
-				7586F4D0B7982347D688416E /* CalculatorContent.swift */,
-				E5CDF856933CADEBE2754C73 /* FilesContent.swift */,
-				3995B1B6C147DB7A8286BA6C /* NotesContent.swift */,
-				D0879768ED438AF5793275E1 /* SettingsContent.swift */,
-				A0E33787D650CB1ABB30D047 /* TextEditorView.swift */,
-				3774ADEBF0D57B86EC03EB6A /* ViewerContents.swift */,
-			);
-			path = Apps;
 			sourceTree = "<group>";
 		};
 		56C1C36EF61AC1288D7D5707 /* Browser */ = {
@@ -152,15 +165,6 @@
 				89188F6A6DC1C359407CACBE /* BrowserTab.swift */,
 			);
 			path = Browser;
-			sourceTree = "<group>";
-		};
-		FCF6123DE1B6327ACFB24065 /* RemoteDesktop */ = {
-			isa = PBXGroup;
-			children = (
-				F6423858E940F06BD919F15A /* RemoteDesktopContent.swift */,
-				92127080CE04D7D95BCFD582 /* VNCClient.swift */,
-			);
-			path = RemoteDesktop;
 			sourceTree = "<group>";
 		};
 		647E7164A06FF71518326D10 /* Core */ = {
@@ -190,15 +194,29 @@
 			path = Desktop;
 			sourceTree = "<group>";
 		};
-		0FB9A32B111B5D4CA1E5B906 /* Phone */ = {
+		8E2459B75B59FE35180D5B27 /* Apps */ = {
 			isa = PBXGroup;
 			children = (
-				1DB4BB6B8AA2833E14950930 /* HardwareInput.swift */,
-				8056FAA889836DFA97839CE6 /* KeyboardSinkView.swift */,
-				52B441A2A4C0DD4481383EB1 /* PhoneViewController.swift */,
-				FC6B33471F7EE41F4F709FA7 /* TrackpadView.swift */,
+				FCF6123DE1B6327ACFB24065 /* RemoteDesktop */,
+				56C1C36EF61AC1288D7D5707 /* Browser */,
+				080B69F54095EA2A83E9B75B /* AppKind.swift */,
+				7586F4D0B7982347D688416E /* CalculatorContent.swift */,
+				E5CDF856933CADEBE2754C73 /* FilesContent.swift */,
+				3995B1B6C147DB7A8286BA6C /* NotesContent.swift */,
+				D0879768ED438AF5793275E1 /* SettingsContent.swift */,
+				A0E33787D650CB1ABB30D047 /* TextEditorView.swift */,
+				3774ADEBF0D57B86EC03EB6A /* ViewerContents.swift */,
 			);
-			path = Phone;
+			path = Apps;
+			sourceTree = "<group>";
+		};
+		FCF6123DE1B6327ACFB24065 /* RemoteDesktop */ = {
+			isa = PBXGroup;
+			children = (
+				F6423858E940F06BD919F15A /* RemoteDesktopContent.swift */,
+				92127080CE04D7D95BCFD582 /* VNCClient.swift */,
+			);
+			path = RemoteDesktop;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -250,6 +268,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
+                FEE000000000000000000001,
 				42AEFBAE01D2DFD981F7DA7D /* PocketDesk */,
 			);
 		};
@@ -271,6 +290,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+                FEE100000000000000000002,
 				15FF83B2F6609227468FC32A /* AppDelegate.swift in Sources */,
 				E5346FCA4C9491686234CF1F /* SceneDelegates.swift in Sources */,
 				C9252A3F550BABD5F296A867 /* AppKind.swift in Sources */,
@@ -309,7 +329,7 @@
 
 /* Begin XCBuildConfiguration section */
 		54458BE9CBAFFCBAC8871346 /* Debug */ = {
-			isa = XCBuildConfiguration;
+			isa = XCBuildConfiguration; baseConfigurationReference = FEE200000000000000000001;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
@@ -342,36 +362,66 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
-				GCC_NO_COMMON_BLOCKS = YES;
-				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
-				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
-				GCC_WARN_UNDECLARED_SELECTOR = YES;
-				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
-				GCC_WARN_UNUSED_FUNCTION = YES;
-				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
-				MTL_FAST_MATH = YES;
-				SDKROOT = iphoneos;
-				DEBUG_INFORMATION_FORMAT = dwarf;
-				ENABLE_TESTABILITY = YES;
 				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
 				GCC_OPTIMIZATION_LEVEL = 0;
 				GCC_PREPROCESSOR_DEFINITIONS = (
 					"DEBUG=1",
 					"$(inherited)",
 				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 			};
 			name = Debug;
 		};
+		7E3B7684039516EF3CECD9A8 /* Release */ = {
+			isa = XCBuildConfiguration; baseConfigurationReference = FEE200000000000000000001;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 4;
+				DEVELOPMENT_TEAM = "$(POCKETDESK_TEAM)";
+				ENABLE_PREVIEWS = NO;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = PocketDesk/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0.3;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(POCKETDESK_BUNDLE_ID)";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_STRICT_CONCURRENCY = minimal;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
 		C8E023D0EDFF84F5F18BBE90 /* Release */ = {
-			isa = XCBuildConfiguration;
+			isa = XCBuildConfiguration; baseConfigurationReference = FEE200000000000000000001;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
@@ -404,6 +454,8 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
@@ -415,24 +467,22 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				SDKROOT = iphoneos;
-				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
-				ENABLE_NS_ASSERTIONS = NO;
-				MTL_ENABLE_DEBUG_INFO = NO;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				VALIDATE_PRODUCT = YES;
 			};
 			name = Release;
 		};
 		CAA09E8F80120188EC628324 /* Debug */ = {
-			isa = XCBuildConfiguration;
+			isa = XCBuildConfiguration; baseConfigurationReference = FEE200000000000000000001;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = "";
+				CURRENT_PROJECT_VERSION = 4;
+				DEVELOPMENT_TEAM = "$(POCKETDESK_TEAM)";
 				ENABLE_PREVIEWS = NO;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = PocketDesk/Info.plist;
@@ -441,8 +491,8 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.yourname.pocketdesk;
+				MARKETING_VERSION = 1.0.3;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(POCKETDESK_BUNDLE_ID)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
@@ -454,36 +504,6 @@
 				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Debug;
-		};
-		7E3B7684039516EF3CECD9A8 /* Release */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = "";
-				ENABLE_PREVIEWS = NO;
-				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = PocketDesk/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-				);
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.yourname.pocketdesk;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
-				SUPPORTS_MACCATALYST = NO;
-				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
-				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
-				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_STRICT_CONCURRENCY = minimal;
-				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = 1;
-			};
-			name = Release;
 		};
 /* End XCBuildConfiguration section */
 

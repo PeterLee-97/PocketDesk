@@ -27,6 +27,7 @@ final class VNCClient {
         var host: String
         var port: Int
         var password: String
+        var macKeyboard = false
     }
 
     weak var delegate: VNCClientDelegate?
@@ -34,8 +35,14 @@ final class VNCClient {
     private let server: Server
     private var connection: NWConnection?
     private let queue = DispatchQueue(label: "PocketDesk.VNC")
+    private let sessionQueue = DispatchQueue(label: "PocketDesk.VNC.Parser", qos: .userInitiated)
     private let reader = ByteReader()
-    private var running = false
+    private let stateLock = NSLock()
+    private var _running = false
+    private var running: Bool {
+        get { stateLock.lock(); defer { stateLock.unlock() }; return _running }
+        set { stateLock.lock(); _running = newValue; stateLock.unlock() }
+    }
 
     // Framebuffer (BGRX, one word per pixel, little-endian 0x00RRGGBB).
     private var width = 0
@@ -74,13 +81,14 @@ final class VNCClient {
             switch state {
             case .ready:
                 self.receiveLoop()
-                self.queue.async { self.runSession() }
+                // Parsing waits for bytes. It must never block the queue delivering those bytes.
+                self.sessionQueue.async { self.runSession() }
             case .failed(let error):
                 self.fail(error.localizedDescription)
             case .cancelled:
-                self.report(.closed)
+                break
             case .waiting(let error):
-                self.report(.failed(Self.friendly(error)))
+                self.fail(Self.friendly(error))
             default:
                 break
             }
@@ -93,7 +101,7 @@ final class VNCClient {
         running = false
         reader.close(nil)
         connection?.cancel()
-        connection = nil
+        report(.closed)
     }
 
     private func fail(_ message: String) {
@@ -101,7 +109,6 @@ final class VNCClient {
         running = false
         reader.close(VNCError.protocolError(message))
         connection?.cancel()
-        connection = nil
         report(.failed(message))
     }
 
@@ -147,7 +154,7 @@ final class VNCClient {
         connection?.send(content: data, completion: .contentProcessed { _ in })
     }
 
-    // MARK: Handshake + session (runs on `queue`, may block on reader)
+    // MARK: Handshake + session (runs on `sessionQueue`, may block on reader)
 
     private func runSession() {
         do {
@@ -469,15 +476,20 @@ final class VNCClient {
     }
 
     private var publishScheduled = false
+    private let publishLock = NSLock()
 
     private func publishFrame() {
-        guard !publishScheduled else { return }
+        publishLock.lock()
+        guard !publishScheduled else { publishLock.unlock(); return }
         publishScheduled = true
+        publishLock.unlock()
         let snapshot = Data(pixels)
         let w = width, h = height
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
+            self.publishLock.lock()
             self.publishScheduled = false
+            self.publishLock.unlock()
             guard let image = VNCClient.makeImage(from: snapshot, width: w, height: h) else { return }
             self.delegate?.vncClient(self, didRenderFrame: image)
         }
@@ -496,6 +508,10 @@ final class VNCClient {
 
     /// `point` is in framebuffer pixels. Throttled to ~120 Hz for motion.
     func sendPointer(x: Int, y: Int, buttonMask: UInt8, force: Bool = false) {
+        queue.async { [weak self] in self?.sendPointerNow(x: x, y: y, buttonMask: buttonMask, force: force) }
+    }
+
+    private func sendPointerNow(x: Int, y: Int, buttonMask: UInt8, force: Bool) {
         let clampedX = max(0, min(width - 1, x))
         let clampedY = max(0, min(height - 1, y))
         pendingPoint = (clampedX, clampedY)
@@ -522,7 +538,15 @@ final class VNCClient {
     }
 
     func sendScroll(up: Bool, times: Int) {
-        let bit: UInt8 = up ? 0x08 : 0x10   // button 4 / button 5
+        sendScroll(horizontal: false, negative: up, times: times)
+    }
+
+    func sendScroll(horizontal: Bool, negative: Bool, times: Int) {
+        queue.async { [weak self] in self?.sendScrollNow(horizontal: horizontal, negative: negative, times: times) }
+    }
+
+    private func sendScrollNow(horizontal: Bool, negative: Bool, times: Int) {
+        let bit: UInt8 = horizontal ? (negative ? 0x20 : 0x40) : (negative ? 0x08 : 0x10)
         for _ in 0..<max(1, times) {
             sendButtons(mask: pendingButtonMask | bit, x: pendingPoint.x, y: pendingPoint.y)
             sendButtons(mask: pendingButtonMask & ~bit, x: pendingPoint.x, y: pendingPoint.y)
@@ -540,6 +564,16 @@ final class VNCClient {
         var message = Data([4, down ? 1 : 0, 0, 0])
         message.append(contentsOf: keysym.bigEndianBytes)
         send(message)
+    }
+
+    /// macOS's input-source shortcut. Keep the complete chord ordered on the transport queue.
+    func sendMacInputSourceToggle() {
+        queue.async { [weak self] in
+            guard let self else { return }
+            self.sendKey(keysym: 0xFFE3, down: true)
+            self.sendKeyPress(keysym: 0x20)
+            self.sendKey(keysym: 0xFFE3, down: false)
+        }
     }
 
     func sendKeyPress(keysym: UInt32) {

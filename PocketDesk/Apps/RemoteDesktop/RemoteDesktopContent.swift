@@ -1,4 +1,5 @@
 import UIKit
+import Security
 
 /// X11 keysym mapping for sending our virtual keyboard to a VNC host.
 enum Keysym {
@@ -37,12 +38,15 @@ enum Keysym {
 }
 
 /// Shows a remote computer's screen and drives it with our virtual pointer + keyboard.
-final class RemoteScreenView: UIView, PointerTarget, HoverTarget, ScrollTarget, CursorProvider, KeyInputTarget {
+final class RemoteScreenView: UIView, PointerTarget, HoverTarget, ScrollTarget, CursorProvider, KeyInputTarget, ZoomTarget {
     weak var client: VNCClient?
     private let imageLayer = CALayer()
     private var displayRect: CGRect = .zero
     private var frameSize: CGSize = .zero
     private var buttonMask: UInt8 = 0
+    private var zoomFactor: CGFloat = 1
+    private var pan = CGPoint.zero
+    private var wheelRemainder = CGPoint.zero
     var inputDescription = "원격 데스크톱"
     /// Map ⌘ to the remote's Ctrl (what Windows/Linux hosts expect for copy/paste/etc.).
     var mapCommandToControl = true
@@ -50,6 +54,7 @@ final class RemoteScreenView: UIView, PointerTarget, HoverTarget, ScrollTarget, 
     override init(frame: CGRect) {
         super.init(frame: frame)
         backgroundColor = .black
+        clipsToBounds = true
         imageLayer.magnificationFilter = .linear
         imageLayer.minificationFilter = .trilinear
         imageLayer.contentsGravity = .resize
@@ -78,9 +83,11 @@ final class RemoteScreenView: UIView, PointerTarget, HoverTarget, ScrollTarget, 
             imageLayer.frame = bounds
             return
         }
-        let scale = min(bounds.width / frameSize.width, bounds.height / frameSize.height)
+        let scale = min(bounds.width / frameSize.width, bounds.height / frameSize.height) * zoomFactor
         let size = CGSize(width: frameSize.width * scale, height: frameSize.height * scale)
-        displayRect = CGRect(x: (bounds.width - size.width) / 2, y: (bounds.height - size.height) / 2,
+        pan.x = min(max(pan.x, -max(0, size.width - bounds.width) / 2), max(0, size.width - bounds.width) / 2)
+        pan.y = min(max(pan.y, -max(0, size.height - bounds.height) / 2), max(0, size.height - bounds.height) / 2)
+        displayRect = CGRect(x: (bounds.width - size.width) / 2 + pan.x, y: (bounds.height - size.height) / 2 + pan.y,
                              width: size.width, height: size.height)
         imageLayer.frame = displayRect
     }
@@ -136,17 +143,44 @@ final class RemoteScreenView: UIView, PointerTarget, HoverTarget, ScrollTarget, 
     }
 
     func scroll(by delta: CGPoint, event: PointerEvent) -> Bool {
+        if zoomFactor > 1.01 {
+            pan.x -= delta.x; pan.y -= delta.y
+            layoutImage()
+            return true
+        }
         if let pixel = pixel(for: event) {
             client?.sendPointer(x: pixel.x, y: pixel.y, buttonMask: buttonMask)
         }
-        let steps = max(1, min(5, Int(abs(delta.y) / 16)))
-        client?.sendScroll(up: delta.y < 0, times: steps)
+        wheelRemainder.x += delta.x; wheelRemainder.y += delta.y
+        for horizontal in [false, true] {
+            let value = horizontal ? wheelRemainder.x : wheelRemainder.y
+            let steps = min(8, Int(abs(value) / 16))
+            if steps > 0 {
+                client?.sendScroll(horizontal: horizontal, negative: value < 0, times: steps)
+                let consumed = CGFloat(steps * 16) * (value < 0 ? -1 : 1)
+                if horizontal { wheelRemainder.x -= consumed } else { wheelRemainder.y -= consumed }
+            }
+        }
         return true
     }
+
+    func zoom(by factor: CGFloat, event: PointerEvent) {
+        guard factor.isFinite, factor > 0, displayRect.width > 0, displayRect.height > 0 else { return }
+        let old = displayRect, anchor = event.location(in: self)
+        zoomFactor = min(4, max(1, zoomFactor * factor))
+        layoutImage()
+        pan.x += anchor.x - displayRect.minX - (anchor.x - old.minX) / old.width * displayRect.width
+        pan.y += anchor.y - displayRect.minY - (anchor.y - old.minY) / old.height * displayRect.height
+        layoutImage()
+    }
+
+    func smartZoom(event: PointerEvent) { zoom(by: zoomFactor > 1.01 ? 1 / zoomFactor : 2, event: event) }
 
     func cursor(at point: CGPoint) -> CursorKind? { .arrow }
 
     // MARK: Keyboard
+
+    func toggleMacInputLanguage() { client?.sendMacInputSourceToggle() }
 
     var acceptsTextInput: Bool { true }
 
@@ -253,6 +287,7 @@ final class RemoteDesktopContent: AppContentView, VNCClientDelegate, KeyInputTar
         case .connecting:
             spinner.startAnimating()
         case .connected:
+            if let server = currentServer { VNCServerStore.save(server) }
             spinner.stopAnimating()
             if let server = currentServer { title = "원격 — \(server.name)" }
             if deskWindow?.isActive == true { desktop?.setKeyFocus(screenView) }
@@ -260,12 +295,13 @@ final class RemoteDesktopContent: AppContentView, VNCClientDelegate, KeyInputTar
     }
 
     private func connect(to server: VNCClient.Server) {
-        VNCServerStore.save(server)
+        client?.stop()
         currentServer = server
         let client = VNCClient(server: server)
         client.delegate = self
         self.client = client
         screenView.client = client
+        screenView.mapCommandToControl = !server.macKeyboard
         statusLabel.text = "\(server.host):\(server.port)에 연결하는 중…"
         phase = .connecting
         client.start()
@@ -293,6 +329,7 @@ final class RemoteDesktopContent: AppContentView, VNCClientDelegate, KeyInputTar
     // MARK: VNCClientDelegate
 
     func vncClient(_ client: VNCClient, didChange status: VNCClient.Status) {
+        guard client === self.client else { return }
         switch status {
         case .connecting:
             statusLabel.text = "연결하는 중…"
@@ -320,6 +357,7 @@ final class RemoteDesktopContent: AppContentView, VNCClientDelegate, KeyInputTar
     }
 
     func vncClient(_ client: VNCClient, didRenderFrame image: CGImage) {
+        guard client === self.client else { return }
         screenView.setFrameImage(image, size: client.framebufferSize)
         if phase != .connected { phase = .connected }
     }
@@ -336,33 +374,78 @@ final class RemoteDesktopContent: AppContentView, VNCClientDelegate, KeyInputTar
     func handleSpecialKey(_ key: SpecialKey, modifiers: KeyModifiers) {}
 }
 
-/// Saved VNC servers (stored in UserDefaults; the password is kept so reconnecting is one tap —
-/// note this is local-convenience storage, not a secure keychain entry).
+/// Addresses live in preferences; credentials are stored in this device's Keychain.
 enum VNCServerStore {
-    static func all() -> [VNCClient.Server] {
-        guard let raw = UserDefaults.standard.array(forKey: "vncServers") as? [[String: Any]] else { return [] }
-        return raw.compactMap { entry in
-            guard let host = entry["host"] as? String else { return nil }
-            return VNCClient.Server(
-                name: entry["name"] as? String ?? host,
-                host: host,
-                port: entry["port"] as? Int ?? 5900,
-                password: entry["password"] as? String ?? ""
-            )
-        }
+    private static let service = "com.johnjar.pocketdesk.vnc"
+    private static func account(_ host: String, _ port: Int) -> String { "\(host.lowercased()):\(port)" }
+    private static func query(_ host: String, _ port: Int) -> [String: Any] {
+        [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
+         kSecAttrAccount as String: account(host, port)]
     }
-
+    private static func password(_ host: String, _ port: Int) -> String? {
+        var q = query(host, port)
+        q[kSecReturnData as String] = true
+        var item: CFTypeRef?
+        guard SecItemCopyMatching(q as CFDictionary, &item) == errSecSuccess, let data = item as? Data else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+    @discardableResult
+    private static func storePassword(_ value: String, host: String, port: Int) -> Bool {
+        let q = query(host, port)
+        let attrs: [String: Any] = [kSecValueData as String: Data(value.utf8),
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly]
+        let result = SecItemUpdate(q as CFDictionary, attrs as CFDictionary)
+        if result == errSecSuccess { return true }
+        if result != errSecItemNotFound { return false }
+        return SecItemAdd(q.merging(attrs) { _, new in new } as CFDictionary, nil) == errSecSuccess
+    }
+    private static func metadata(_ server: VNCClient.Server) -> [String: Any] {
+        ["name": server.name, "host": server.host, "port": server.port, "macKeyboard": server.macKeyboard]
+    }
+    static func all() -> [VNCClient.Server] {
+        importSetupProfile()
+        var raw = UserDefaults.standard.array(forKey: "vncServers") as? [[String: Any]] ?? []
+        var changed = false
+        let servers: [VNCClient.Server] = raw.indices.compactMap { index in
+            let entry = raw[index]
+            guard let host = entry["host"] as? String else { return nil }
+            let port = entry["port"] as? Int ?? 5900
+            let old = entry["password"] as? String
+            if let old, storePassword(old, host: host, port: port) {
+                raw[index].removeValue(forKey: "password"); changed = true
+            }
+            return VNCClient.Server(name: entry["name"] as? String ?? host, host: host, port: port,
+                password: password(host, port) ?? old ?? "", macKeyboard: entry["macKeyboard"] as? Bool ?? false)
+        }
+        if changed { UserDefaults.standard.set(raw, forKey: "vncServers") }
+        return servers
+    }
     static func save(_ server: VNCClient.Server) {
+        guard storePassword(server.password, host: server.host, port: server.port) else { return }
         var servers = all().filter { !($0.host == server.host && $0.port == server.port) }
         servers.insert(server, at: 0)
-        let encoded = servers.prefix(8).map { ["name": $0.name, "host": $0.host, "port": $0.port, "password": $0.password] }
-        UserDefaults.standard.set(encoded, forKey: "vncServers")
+        UserDefaults.standard.set(servers.prefix(8).map(metadata), forKey: "vncServers")
     }
-
     static func remove(host: String, port: Int) {
         let servers = all().filter { !($0.host == host && $0.port == port) }
-        let encoded = servers.map { ["name": $0.name, "host": $0.host, "port": $0.port, "password": $0.password] }
-        UserDefaults.standard.set(encoded, forKey: "vncServers")
+        SecItemDelete(query(host, port) as CFDictionary)
+        UserDefaults.standard.set(servers.map(metadata), forKey: "vncServers")
+    }
+    /// Local device provisioning contains only an address, never a password or automatic connection.
+    private static func importSetupProfile() {
+        let url = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("pocketdesk-remote-setup.json")
+        guard let data = try? Data(contentsOf: url),
+              let entry = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let host = entry["host"] as? String, !host.isEmpty,
+              let port = entry["port"] as? Int, (1...65535).contains(port) else { return }
+        let server = VNCClient.Server(name: entry["name"] as? String ?? host, host: host, port: port,
+            password: "", macKeyboard: entry["macKeyboard"] as? Bool ?? false)
+        var entries = UserDefaults.standard.array(forKey: "vncServers") as? [[String: Any]] ?? []
+        if !entries.contains(where: { $0["host"] as? String == host && $0["port"] as? Int == port }) {
+            entries.insert(metadata(server), at: 0)
+            UserDefaults.standard.set(entries, forKey: "vncServers")
+        }
+        try? FileManager.default.removeItem(at: url)
     }
 }
 
@@ -379,6 +462,7 @@ final class VNCConnectForm: UIView {
     private let portField = DeskTextField(placeholder: "5900")
     private let passwordField = DeskTextField(placeholder: "VNC 비밀번호")
     private let connectButton = DeskButton(symbol: "bolt.fill", title: "연결")
+    private let macKeyboardButton = DeskButton(symbol: "command", title: "Mac 키보드 · ⌘ 그대로 보내기")
     private let savedLabel = UILabel()
     private let savedList = DeskListView()
     private let hintLabel = UILabel()
@@ -417,20 +501,26 @@ final class VNCConnectForm: UIView {
         connectButton.fontSize = 14
         connectButton.onTap = { [weak self] in self?.submit() }
         scrollView.addSubview(connectButton)
+        macKeyboardButton.onTap = { [weak self] in
+            guard let self else { return }; self.macKeyboardButton.isToggled.toggle()
+        }
+        scrollView.addSubview(macKeyboardButton)
 
         savedLabel.text = "저장된 연결"
         savedLabel.textColor = Theme.secondaryText
         scrollView.addSubview(savedLabel)
         savedList.rowHeight = 46
         savedList.onActivate = { [weak self] index in self?.connectSaved(index) }
+        savedList.activatesOnSingleClick = true
         savedList.onContextMenu = { [weak self] index, event in self?.savedMenu(index, at: event.location) }
         scrollView.addSubview(savedList)
 
         hintLabel.numberOfLines = 0
         hintLabel.textColor = Theme.tertiaryText
-        hintLabel.text = "• Windows: TightVNC·UltraVNC·RealVNC 서버 설치\n• Mac: 시스템 설정 › 일반 › 공유 › 화면 공유 켜기 → 'VNC 사용자가…'에서 비밀번호 설정\n• Linux: x11vnc 또는 TigerVNC\n• 클라우드 PC(Windows 365 등)에 VNC 서버를 깔아도 됩니다"
+        hintLabel.text = "• Windows: TightVNC·UltraVNC·RealVNC 서버 설치\n• Mac: 시스템 설정 › 일반 › 공유 › 화면 공유 켜기 → 'VNC 사용자가…'에서 비밀번호 설정\n• Linux: x11vnc 또는 TigerVNC\n• 외부: 양쪽 Tailscale을 켜고 Mac의 100.x.x.x 주소 사용\n• 연결에 성공한 암호는 이 기기의 키체인에 저장됩니다"
         scrollView.addSubview(hintLabel)
         reloadSaved()
+        if let first = saved.first { fill(first) }
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -454,13 +544,23 @@ final class VNCConnectForm: UIView {
         }
         let port = Int(portField.text.trimmingCharacters(in: .whitespaces)) ?? 5900
         let name = nameField.text.trimmingCharacters(in: .whitespaces)
-        let server = VNCClient.Server(name: name.isEmpty ? host : name, host: host, port: port, password: passwordField.text)
+        let server = VNCClient.Server(name: name.isEmpty ? host : name, host: host, port: port, password: passwordField.text, macKeyboard: macKeyboardButton.isToggled)
         onConnect?(server)
     }
 
     private func connectSaved(_ index: Int) {
         guard saved.indices.contains(index) else { return }
-        onConnect?(saved[index])
+        let server = saved[index]
+        fill(server)
+        if server.password.isEmpty {
+            DeskSession.shared.desktop?.setKeyFocus(passwordField)
+            DeskSession.shared.desktop?.showToast("Mac에서 설정한 VNC 암호를 입력하세요", symbol: "lock")
+        } else { onConnect?(server) }
+    }
+
+    private func fill(_ server: VNCClient.Server) {
+        nameField.text = server.name; hostField.text = server.host; portField.text = String(server.port)
+        passwordField.text = server.password; macKeyboardButton.isToggled = server.macKeyboard
     }
 
     private func savedMenu(_ index: Int?, at point: CGPoint) {
@@ -497,6 +597,8 @@ final class VNCConnectForm: UIView {
         y += fieldHeight + Theme.s(8)
         passwordField.frame = CGRect(x: x, y: y, width: width, height: fieldHeight)
         y += fieldHeight + Theme.s(12)
+        macKeyboardButton.frame = CGRect(x: x, y: y, width: width, height: Theme.s(32))
+        y += Theme.s(40)
         connectButton.frame = CGRect(x: x, y: y, width: width, height: Theme.s(42))
         y += Theme.s(42) + Theme.s(22)
 

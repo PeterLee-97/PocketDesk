@@ -66,12 +66,6 @@ final class Settings {
         set { store(newValue, "haptics") }
     }
 
-    /// Show the phone keyboard when a text field on the desktop gets focus.
-    var autoShowKeyboard: Bool {
-        get { value("autoShowKeyboard", true) }
-        set { store(newValue, "autoShowKeyboard") }
-    }
-
     /// Desktop UI scale. 0 means automatic (based on the display resolution).
     var uiScale: Double {
         get { value("uiScale", 0.0) }

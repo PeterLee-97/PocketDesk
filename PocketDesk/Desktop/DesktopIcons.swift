@@ -118,10 +118,7 @@ final class DesktopIconView: UIView, PointerTarget, HoverTarget {
         container?.select(self)
         switch event.button {
         case .left:
-            if event.clickCount >= 2 {
-                container?.select(nil)
-                onOpen?()
-            }
+            break
         case .right:
             if let items = menuProvider?() {
                 DeskSession.shared.desktop?.showContextMenu(items, at: event.location)
@@ -130,6 +127,12 @@ final class DesktopIconView: UIView, PointerTarget, HoverTarget {
             break
         }
         return true
+    }
+
+    func pointerUp(_ event: PointerEvent) {
+        guard event.button == .left, event.clickCount == 1, bounds.contains(event.location(in: self)) else { return }
+        container?.select(nil)
+        onOpen?()
     }
 
     func pointerEntered() {

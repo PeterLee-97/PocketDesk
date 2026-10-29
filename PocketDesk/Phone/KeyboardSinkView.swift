@@ -10,9 +10,44 @@ final class KeyboardSinkView: UITextView, UITextViewDelegate {
     /// One-shot modifiers from the accessory bar's Ctrl button.
     var stickyModifiers: KeyModifiers = [] { didSet { onStickyChange?() } }
     var onStickyChange: (() -> Void)?
+    var onInputLanguageChange: (() -> Void)?
+    var onToggleInputLanguage: (() -> Void)?
+
+    enum InputLanguage: String {
+        case korean = "ko", english = "en"
+        var title: String { self == .korean ? "한국어" : "영어" }
+        var next: InputLanguage { self == .korean ? .english : .korean }
+        init?(primaryLanguage: String?) {
+            guard let prefix = primaryLanguage?.split(separator: "-").first,
+                  let value = InputLanguage(rawValue: String(prefix)) else { return nil }
+            self = value
+        }
+    }
+    private var preferredLanguage: InputLanguage?
+    private var switchingInputLanguage = false
+
+    var inputLanguage: InputLanguage? {
+        preferredLanguage ?? InputLanguage(primaryLanguage: super.textInputMode?.primaryLanguage)
+    }
+
+    override var textInputMode: UITextInputMode? {
+        if let preferredLanguage,
+           let mode = Self.availableMode(for: preferredLanguage) { return mode }
+        return super.textInputMode
+    }
+
+    override var textInputContextIdentifier: String? {
+        "PocketDesk.keyboard.\(preferredLanguage?.rawValue ?? "system")"
+    }
+
+    static func availableMode(for language: InputLanguage) -> UITextInputMode? {
+        UITextInputMode.activeInputModes.first { InputLanguage(primaryLanguage: $0.primaryLanguage) == language }
+    }
 
     private var forwarded = ""
     private var cachedCommands: [UIKeyCommand]?
+    private var handledHardwarePresses = Set<UIPress>()
+    private var panelComposer = HangulComposer()
 
     init() {
         super.init(frame: CGRect(x: 0, y: 0, width: 1, height: 1), textContainer: nil)
@@ -31,9 +66,46 @@ final class KeyboardSinkView: UITextView, UITextViewDelegate {
         isScrollEnabled = false
         inputAssistantItem.leadingBarButtonGroups = []
         inputAssistantItem.trailingBarButtonGroups = []
+        NotificationCenter.default.addObserver(self, selector: #selector(systemInputLanguageChanged),
+            name: UITextInputMode.currentInputModeDidChangeNotification, object: nil)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    /// Commit the IME before changing responders. Clearing the local buffer must not delete
+    /// the text that has already reached the browser, address field or remote computer.
+    func commitComposition() {
+        if markedTextRange != nil { unmarkText() }
+        textViewDidChange(self)
+        clearBuffer()
+    }
+
+    @discardableResult
+    func selectInputLanguage(_ language: InputLanguage) -> Bool {
+        guard Self.availableMode(for: language) != nil else { return false }
+        switchingInputLanguage = true
+        commitComposition()
+        stickyModifiers = []
+        preferredLanguage = language
+        if isFirstResponder {
+            // A new editing session makes UIKit apply textInputMode to hardware keyboards too.
+            UIView.performWithoutAnimation {
+                resignFirstResponder()
+                becomeFirstResponder()
+                reloadInputViews()
+            }
+        }
+        switchingInputLanguage = false
+        onInputLanguageChange?()
+        return true
+    }
+
+    @objc private func systemInputLanguageChanged() {
+        guard isFirstResponder, !switchingInputLanguage else { return }
+        // The globe key and iOS's own language shortcuts remain usable.
+        preferredLanguage = InputLanguage(primaryLanguage: super.textInputMode?.primaryLanguage)
+        onInputLanguageChange?()
+    }
 
     // MARK: Text → desktop
 
@@ -72,6 +144,36 @@ final class KeyboardSinkView: UITextView, UITextViewDelegate {
     func clearBuffer() {
         text = ""
         forwarded = ""
+        panelComposer.reset()
+    }
+
+    func insertPanelText(_ value: String, language: InputLanguage) {
+        guard language == .korean, value.count == 1, let jamo = value.first, HangulComposer.isJamo(jamo) else {
+            commitComposition()
+            DeskSession.shared.insertText(value)
+            return
+        }
+        if panelComposer.isEmpty { commitComposition() }
+        let old = panelComposer.text
+        panelComposer.append(jamo)
+        replacePanelComposition(old: old)
+        if panelComposer.text.count > 100 { panelComposer.reset() }
+    }
+
+    func deletePanelBackward() {
+        guard !panelComposer.isEmpty else { commitComposition(); DeskSession.shared.deleteBackward(); return }
+        let old = panelComposer.text
+        panelComposer.delete()
+        replacePanelComposition(old: old)
+    }
+
+    private func replacePanelComposition(old: String) {
+        let before = Array(old), after = Array(panelComposer.text)
+        var prefix = 0
+        while prefix < before.count && prefix < after.count && before[prefix] == after[prefix] { prefix += 1 }
+        for _ in prefix..<before.count { DeskSession.shared.deleteBackward() }
+        let suffix = String(after.dropFirst(prefix))
+        if !suffix.isEmpty { DeskSession.shared.insertText(suffix) }
     }
 
     func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText replacement: String) -> Bool {
@@ -94,6 +196,82 @@ final class KeyboardSinkView: UITextView, UITextViewDelegate {
             DeskSession.shared.deleteBackward()
         } else {
             super.deleteBackward()
+        }
+    }
+
+    /// Hardware HID distinguishes Backspace from forward Delete; UITextView may otherwise
+    /// consume Backspace against its empty IME buffer without forwarding it to the desktop.
+    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        var unhandled = presses
+        for press in presses {
+            guard let key = press.key,
+                  handleHardwareKey(key.keyCode, modifiers: key.modifierFlags) else { continue }
+            handledHardwarePresses.insert(press)
+            unhandled.remove(press)
+        }
+        if !unhandled.isEmpty {
+            if unhandled.contains(where: { press in
+                guard let code = press.key?.keyCode.rawValue else { return false }
+                return !(0xE0...0xE7).contains(code) && code != UIKeyboardHIDUsage.keyboardCapsLock.rawValue
+            }) { panelComposer.reset() }
+            super.pressesBegan(unhandled, with: event)
+        }
+    }
+
+    /// Use physical letter positions so the selected language controls actual Bluetooth
+    /// input, even if the hardware keyboard's native layout has not refreshed yet.
+    @discardableResult
+    func handleHardwareKey(_ code: UIKeyboardHIDUsage, modifiers: UIKeyModifierFlags) -> Bool {
+        if code == .keyboardLANG1 || (code == .keyboardSpacebar && modifiers.intersection([.control, .alternate, .command, .shift]) == .control) {
+            if let onToggleInputLanguage { onToggleInputLanguage() }
+            else { _ = selectInputLanguage(inputLanguage?.next ?? .korean) }
+            return true
+        }
+        guard markedTextRange == nil else { return false }
+        if let deletion = Self.deletionKey(for: code) {
+            if deletion == .backspace && modifiers.intersection([.control, .alternate, .command]).isEmpty && !panelComposer.isEmpty {
+                deletePanelBackward()
+            } else {
+                commitComposition()
+                DeskSession.shared.specialKey(deletion, modifiers: KeyModifiers(flags: modifiers))
+            }
+            return true
+        }
+        guard modifiers.intersection([.control, .alternate, .command]).isEmpty,
+              let language = inputLanguage,
+              let letter = Self.hardwareLetter(code, modifiers: modifiers, language: language) else { return false }
+        insertPanelText(letter, language: language)
+        return true
+    }
+
+    static func hardwareLetter(_ code: UIKeyboardHIDUsage, modifiers: UIKeyModifierFlags, language: InputLanguage) -> String? {
+        let index = Int(code.rawValue) - Int(UIKeyboardHIDUsage.keyboardA.rawValue)
+        guard (0..<26).contains(index) else { return nil }
+        if language == .english {
+            let upper = modifiers.contains(.shift) != modifiers.contains(.alphaShift)
+            return String(Array(upper ? "ABCDEFGHIJKLMNOPQRSTUVWXYZ" : "abcdefghijklmnopqrstuvwxyz")[index])
+        }
+        let shifted = modifiers.contains(.shift)
+        return String(Array(shifted ? "ㅁㅠㅊㅇㄸㄹㅎㅗㅑㅓㅏㅣㅡㅜㅒㅖㅃㄲㄴㅆㅕㅍㅉㅌㅛㅋ" : "ㅁㅠㅊㅇㄷㄹㅎㅗㅑㅓㅏㅣㅡㅜㅐㅔㅂㄱㄴㅅㅕㅍㅈㅌㅛㅋ")[index])
+    }
+
+    override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        let unhandled = presses.subtracting(handledHardwarePresses)
+        handledHardwarePresses.subtract(presses)
+        if !unhandled.isEmpty { super.pressesEnded(unhandled, with: event) }
+    }
+
+    override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        let unhandled = presses.subtracting(handledHardwarePresses)
+        handledHardwarePresses.subtract(presses)
+        if !unhandled.isEmpty { super.pressesCancelled(unhandled, with: event) }
+    }
+
+    static func deletionKey(for code: UIKeyboardHIDUsage) -> SpecialKey? {
+        switch code {
+        case .keyboardDeleteOrBackspace: return .backspace
+        case .keyboardDeleteForward: return .deleteForward
+        default: return nil
         }
     }
 
@@ -129,8 +307,12 @@ final class KeyboardSinkView: UITextView, UITextViewDelegate {
     // MARK: Hardware keyboard: special keys and shortcuts
 
     override var keyCommands: [UIKeyCommand]? {
+        let languageCommand = UIKeyCommand(input: " ", modifierFlags: .control, action: #selector(handleLanguageCommand))
+        languageCommand.wantsPriorityOverSystemBehavior = true
+        // Let the Korean/other IME consume deletion and candidate-navigation keys while composing.
+        if markedTextRange != nil { return (super.keyCommands ?? []) + [languageCommand] }
         if let cachedCommands { return cachedCommands }
-        var commands: [UIKeyCommand] = []
+        var commands: [UIKeyCommand] = [languageCommand]
         func add(_ input: String, _ flags: UIKeyModifierFlags) {
             let command = UIKeyCommand(input: input, modifierFlags: flags, action: #selector(handleKeyCommand(_:)))
             command.wantsPriorityOverSystemBehavior = true
@@ -139,7 +321,7 @@ final class KeyboardSinkView: UITextView, UITextViewDelegate {
         let navigation = [
             UIKeyCommand.inputUpArrow, UIKeyCommand.inputDownArrow, UIKeyCommand.inputLeftArrow, UIKeyCommand.inputRightArrow,
             UIKeyCommand.inputHome, UIKeyCommand.inputEnd, UIKeyCommand.inputPageUp, UIKeyCommand.inputPageDown,
-            UIKeyCommand.inputEscape, UIKeyCommand.inputDelete,
+            UIKeyCommand.inputEscape,
         ]
         let navigationModifiers: [UIKeyModifierFlags] = [
             [], .shift, .command, [.command, .shift], .alternate, [.alternate, .shift], .control, [.control, .shift], [.command, .alternate],
@@ -171,7 +353,7 @@ final class KeyboardSinkView: UITextView, UITextViewDelegate {
         case UIKeyCommand.inputPageUp: return .pageUp
         case UIKeyCommand.inputPageDown: return .pageDown
         case UIKeyCommand.inputEscape: return .escape
-        case UIKeyCommand.inputDelete: return .deleteForward
+        case UIKeyCommand.inputDelete, "\u{8}": return .backspace
         case "\r": return .enter
         case "\t": return .tab
         default: return nil
@@ -189,11 +371,16 @@ final class KeyboardSinkView: UITextView, UITextViewDelegate {
             DeskSession.shared.shortcut(input.lowercased(), modifiers: modifiers)
         }
     }
+
+    @objc private func handleLanguageCommand() {
+        _ = handleHardwareKey(.keyboardSpacebar, modifiers: .control)
+    }
 }
 
 /// Extra keys above the on-screen keyboard: Esc, Tab, Ctrl, arrows and "hide".
 final class KeyboardAccessoryBar: UIInputView {
     var onHide: (() -> Void)?
+    var onToggleLanguage: (() -> Void)?
     private weak var sink: KeyboardSinkView?
     private let stack = UIStackView()
     private var controlButton: UIButton?
@@ -218,6 +405,10 @@ final class KeyboardAccessoryBar: UIInputView {
         ])
         stack.addArrangedSubview(makeKey(title: "Esc") { DeskSession.shared.specialKey(.escape, modifiers: []) })
         stack.addArrangedSubview(makeKey(title: "Tab") { DeskSession.shared.specialKey(.tab, modifiers: []) })
+        let language = makeKey(title: "한/영") { [weak self] in self?.onToggleLanguage?() }
+        language.accessibilityIdentifier = "keyboard.language.accessory"
+        language.accessibilityLabel = "한영 전환"
+        stack.addArrangedSubview(language)
         let control = makeKey(title: "Ctrl") { [weak self] in self?.toggleControl() }
         controlButton = control
         stack.addArrangedSubview(control)
