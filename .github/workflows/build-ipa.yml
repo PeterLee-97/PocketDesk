@@ -1,0 +1,41 @@
+# Builds an unsigned IPA on a GitHub macOS runner (no Mac needed on your side).
+# Download it from the run's "Artifacts" section and install it with Sideloadly or AltStore,
+# which sign it with your own Apple ID.
+name: Build unsigned IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Xcode version
+        run: xcodebuild -version
+
+      - name: Build
+        run: |
+          xcodebuild \
+            -project PocketDesk.xcodeproj \
+            -scheme PocketDesk \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: Package IPA
+        run: |
+          mkdir -p Payload
+          cp -R build/Build/Products/Release-iphoneos/PocketDesk.app Payload/
+          zip -qry PocketDesk-unsigned.ipa Payload
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PocketDesk-unsigned-ipa
+          path: PocketDesk-unsigned.ipa
