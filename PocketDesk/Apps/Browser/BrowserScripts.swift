@@ -775,61 +775,158 @@ enum BrowserScripts {
     /// Page-world shim: iPhone WebKit has no element fullscreen, so videos would try to open the
     /// native player (which can't be controlled on a non-interactive display). Instead the element
     /// fills the viewport and the window goes fullscreen on the monitor.
+    ///
+    /// Sites look for the API the way browsers expose it: YouTube only listens for fullscreen
+    /// changes once `"onfullscreenchange" in document` is true, so the handler properties exist
+    /// too. An element inside a frame asks its parent to fill the viewport with that frame,
+    /// and only the top frame tells the app.
     static let fullscreen = #"""
 (function () {
   if (window.__pdFullscreenInstalled) { return; }
   window.__pdFullscreenInstalled = true;
-  var current = null;
-  var css = '.__pd_fs{position:fixed!important;left:0!important;top:0!important;right:0!important;bottom:0!important;' +
-    'width:100vw!important;height:100vh!important;max-width:none!important;max-height:none!important;margin:0!important;' +
-    'padding:0!important;z-index:2147483647!important;background:#000!important;transform:none!important}' +
-    'video.__pd_fs,.__pd_fs video{object-fit:contain!important}';
-  function addStyle() {
-    if (document.getElementById('__pd_fs_style') || !document.documentElement) { return; }
-    var s = document.createElement('style'); s.id = '__pd_fs_style'; s.textContent = css;
-    (document.head || document.documentElement).appendChild(s);
+  var isTop = window === window.top;
+  var current = null, lifted = [];
+  var CHANGE = ['fullscreenchange', 'webkitfullscreenchange'];
+  var css = '.__pd_fs{position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;' +
+    'min-width:0!important;min-height:0!important;max-width:none!important;max-height:none!important;margin:0!important;' +
+    'padding:0!important;border:0!important;box-sizing:border-box!important;z-index:2147483647!important;background:#000!important;' +
+    'transform:none!important;translate:none!important;rotate:none!important;scale:none!important}' +
+    'video.__pd_fs,.__pd_fs video{object-fit:contain!important}' +
+    /* Real fullscreen uses the top layer; without it these ancestor styles would trap or clip the element. */
+    '.__pd_fs_up{transform:none!important;translate:none!important;rotate:none!important;scale:none!important;' +
+    'perspective:none!important;filter:none!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important;' +
+    'contain:none!important;container-type:normal!important;content-visibility:visible!important;will-change:auto!important;' +
+    'clip-path:none!important;mask:none!important;-webkit-mask:none!important;opacity:1!important;z-index:2147483647!important}';
+
+  function parentOf(node) {
+    if (node.parentElement) { return node.parentElement; }
+    var root = node.getRootNode ? node.getRootNode() : null;
+    return root && root.host ? root.host : null;
   }
-  function notify(on) {
-    try { window.webkit.messageHandlers.pocketdesk.postMessage({ type: 'fullscreen', on: on }); } catch (e) {}
+  function addStyle(node) {
+    var root = node.getRootNode ? node.getRootNode() : document;
+    var shadow = root.nodeType === 11;
+    if ((shadow ? root : document).getElementById('__pd_fs_style')) { return; }
+    var container = shadow ? root : (document.head || document.documentElement);
+    if (!container) { return; }
+    var style = document.createElement('style'); style.id = '__pd_fs_style'; style.textContent = css;
+    container.appendChild(style);
   }
-  function changed() {
-    ['fullscreenchange', 'webkitfullscreenchange'].forEach(function (name) {
-      try { document.dispatchEvent(new Event(name, { bubbles: true })); } catch (e) {}
-      if (current) { try { current.dispatchEvent(new Event(name, { bubbles: true })); } catch (e2) {} }
+  function lift(el) {
+    addStyle(el);
+    el.classList.add('__pd_fs');
+    for (var node = parentOf(el); node; node = parentOf(node)) {
+      addStyle(node);
+      node.classList.add('__pd_fs_up');
+      lifted.push(node);
+    }
+  }
+  function drop() {
+    if (current) { current.classList.remove('__pd_fs'); }
+    lifted.forEach(function (node) { node.classList.remove('__pd_fs_up'); });
+    lifted = [];
+  }
+  function fire(el, names) {
+    var target = el && el.isConnected ? el : document;
+    names.forEach(function (name) {
+      try { target.dispatchEvent(new Event(name, { bubbles: true, composed: true })); } catch (e) {}
     });
   }
+  function tell(on) {
+    if (isTop) {
+      try { window.webkit.messageHandlers.pocketdesk.postMessage({ type: 'fullscreen', on: on }); } catch (e) {}
+    } else {
+      try { window.parent.postMessage({ __pdFullscreen: on ? 'enter' : 'exit' }, '*'); } catch (e2) {}
+    }
+  }
   function enter(el) {
-    addStyle();
-    if (current && current !== el) { current.classList.remove('__pd_fs'); }
+    if (!el || el.nodeType !== 1) { return Promise.reject(new TypeError('Not an element')); }
+    if (el === current) { return Promise.resolve(); }
+    var previous = current;
+    drop();
     current = el;
-    el.classList.add('__pd_fs');
-    notify(true);
-    setTimeout(changed, 0);
+    // The whole page going fullscreen only needs the window to fill the monitor.
+    if (el !== document.documentElement && el !== document.body) { lift(el); }
+    tell(true);
+    setTimeout(function () {
+      if (previous) { fire(previous, CHANGE); }
+      fire(el, CHANGE);
+      if (el.tagName === 'VIDEO') { fire(el, ['webkitbeginfullscreen']); }
+    }, 0);
     return Promise.resolve();
   }
-  function exit() {
-    if (!current) { return Promise.resolve(); }
+  function exit(fromParent) {
     var el = current;
-    el.classList.remove('__pd_fs');
-    notify(false);
-    setTimeout(function () { changed(); el.dispatchEvent(new Event('webkitendfullscreen', { bubbles: true })); }, 0);
-    current = null;
+    if (el) {
+      drop();
+      current = null;
+      if (!fromParent) { tell(false); }
+      setTimeout(function () { fire(el, CHANGE.concat(['webkitendfullscreen'])); }, 0);
+    }
+    for (var i = 0; i < window.frames.length; i++) {
+      try { window.frames[i].postMessage({ __pdExitFullscreen: true }, '*'); } catch (e) {}
+    }
     return Promise.resolve();
   }
+  function frameFor(source) {
+    var frames = document.querySelectorAll('iframe,frame');
+    for (var i = 0; i < frames.length; i++) { if (frames[i].contentWindow === source) { return frames[i]; } }
+    return null;
+  }
+  function allowed(frame) {
+    if (frame.hasAttribute('allowfullscreen') || frame.hasAttribute('webkitallowfullscreen') ||
+        /(^|[;\s])fullscreen\b/.test(frame.getAttribute('allow') || '')) { return true; }
+    try { return !!frame.contentDocument; } catch (e) { return false; }
+  }
+  window.addEventListener('message', function (e) {
+    var data = e.data;
+    if (!data || typeof data !== 'object' || !e.source) { return; }
+    if (data.__pdExitFullscreen === true) {
+      if (!isTop && e.source === window.parent) { exit(true); }
+      return;
+    }
+    if (data.__pdFullscreen !== 'enter' && data.__pdFullscreen !== 'exit') { return; }
+    var frame = frameFor(e.source);
+    if (!frame) { return; }
+    if (data.__pdFullscreen === 'exit') { if (current === frame) { exit(); } } else if (allowed(frame)) { enter(frame); }
+  });
+
+  function handlerProperty(proto, type) {
+    if (!proto || ('on' + type) in proto) { return; }
+    var slot = Symbol(type);
+    try {
+      Object.defineProperty(proto, 'on' + type, {
+        configurable: true, enumerable: true,
+        get: function () { return this[slot] || null; },
+        set: function (fn) {
+          if (this[slot]) { this.removeEventListener(type, this[slot]); }
+          this[slot] = typeof fn === 'function' ? fn : null;
+          if (this[slot]) { this.addEventListener(type, this[slot]); }
+        }
+      });
+    } catch (e) {}
+  }
+  ['fullscreenchange', 'fullscreenerror', 'webkitfullscreenchange', 'webkitfullscreenerror'].forEach(function (type) {
+    handlerProperty(window.Document && Document.prototype, type);
+    handlerProperty(window.Element && Element.prototype, type);
+  });
+
   var EP = Element.prototype;
   EP.requestFullscreen = function () { return enter(this); };
   EP.webkitRequestFullscreen = EP.requestFullscreen;
   EP.webkitRequestFullScreen = EP.requestFullscreen;
   if (window.HTMLVideoElement) {
-    HTMLVideoElement.prototype.webkitEnterFullscreen = function () { enter(this); };
-    HTMLVideoElement.prototype.webkitEnterFullScreen = HTMLVideoElement.prototype.webkitEnterFullscreen;
-    HTMLVideoElement.prototype.webkitExitFullscreen = function () { exit(); };
-    try { Object.defineProperty(HTMLVideoElement.prototype, 'webkitSupportsFullscreen', { get: function () { return true; }, configurable: true }); } catch (e) {}
-    try { Object.defineProperty(HTMLVideoElement.prototype, 'webkitDisplayingFullscreen', { get: function () { return current === this; }, configurable: true }); } catch (e) {}
+    var VP = HTMLVideoElement.prototype;
+    VP.webkitEnterFullscreen = function () { enter(this); };
+    VP.webkitEnterFullScreen = VP.webkitEnterFullscreen;
+    VP.webkitExitFullscreen = function () { if (current === this) { exit(); } };
+    VP.webkitExitFullScreen = VP.webkitExitFullscreen;
+    try { Object.defineProperty(VP, 'webkitSupportsFullscreen', { get: function () { return true; }, configurable: true }); } catch (e) {}
+    try { Object.defineProperty(VP, 'webkitDisplayingFullscreen', { get: function () { return current === this; }, configurable: true }); } catch (e) {}
   }
-  document.exitFullscreen = exit;
-  document.webkitExitFullscreen = exit;
-  document.webkitCancelFullScreen = exit;
+  document.exitFullscreen = function () { return exit(); };
+  document.webkitExitFullscreen = document.exitFullscreen;
+  document.webkitCancelFullScreen = document.exitFullscreen;
   function define(name, getter) {
     try { Object.defineProperty(document, name, { get: getter, configurable: true }); } catch (e) {}
   }
@@ -840,13 +937,7 @@ enum BrowserScripts {
   define('webkitFullscreenEnabled', function () { return true; });
   define('fullscreen', function () { return !!current; });
   define('webkitIsFullScreen', function () { return !!current; });
-  window.__pdExitFullscreen = function () {
-    exit();
-    for (var i = 0; i < window.frames.length; i++) { window.frames[i].postMessage({ __pdExitFullscreen: true }, '*'); }
-  };
-  window.addEventListener('message', function (e) {
-    if (window !== window.top && e.source === window.parent && e.data && e.data.__pdExitFullscreen === true) { window.__pdExitFullscreen(); }
-  });
+  window.__pdExitFullscreen = function () { exit(); };
 })();
 """#
 }

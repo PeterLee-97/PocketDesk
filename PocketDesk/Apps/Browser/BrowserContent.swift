@@ -154,6 +154,7 @@ final class BrowserContent: AppContentView, WKNavigationDelegate, WKUIDelegate {
         addressField.onEscape = { [weak self] in self?.cancelAddressEditing() }
 
         NotificationCenter.default.addObserver(self, selector: #selector(themeChanged), name: Theme.didChange, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(settingsChanged(_:)), name: Settings.didChange, object: nil)
 
         let tab = addTab(configuration: configuration ?? BrowserEnvironment.makeConfiguration(), select: true)
         if let url {
@@ -173,6 +174,11 @@ final class BrowserContent: AppContentView, WKNavigationDelegate, WKUIDelegate {
 
     @objc private func themeChanged() {
         tabs.forEach { $0.applyZoom() }
+    }
+
+    @objc private func settingsChanged(_ notification: Notification) {
+        guard notification.userInfo?["key"] as? String == "desktopWebsites" else { return }
+        tabs.forEach { $0.applyUserAgent() }
     }
 
     // MARK: Layout
