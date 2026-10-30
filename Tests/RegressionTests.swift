@@ -139,6 +139,44 @@ final class RegressionTests: XCTestCase {
         try await eventually("!document.getElementById('f').contentDocument.fullscreenElement")
     }
 
+    func testFullscreenEventsReachSitesThatFeatureDetectHandlers() async throws {
+        try await load("<div style='transform:translateX(10px);contain:paint;width:120px;height:80px'><div id='p' style='width:120px;height:80px'></div></div>")
+        // YouTube picks its event name with `"on" + name in document` and never listens otherwise.
+        _ = try await js("""
+            window.events = 0;
+            var name = ['fullscreenchange', 'webkitfullscreenchange'].find(function (n) { return ('on' + n) in document; });
+            document.addEventListener(name, function () { window.events++; });
+            document.documentElement.requestFullscreen(); true
+            """)
+        try await eventually("window.events === 1 && document.fullscreenElement === document.documentElement && document.documentElement.className === ''")
+        _ = try await js("document.getElementById('p').requestFullscreen(); true")
+        try await eventually("(function () { var r = document.getElementById('p').getBoundingClientRect(); return r.left === 0 && r.top === 0 && Math.abs(r.width - innerWidth) < 1 && Math.abs(r.height - innerHeight) < 1; })()")
+        _ = try await js("window.__pdExitFullscreen(); true")
+        try await eventually("!document.fullscreenElement && window.events === 4")
+    }
+
+    func testFramedPlayerFillsTheWindowAndExitsTogether() async throws {
+        try await load("<iframe id='f' allowfullscreen style='width:200px;height:100px' srcdoc=\"<div id='p' style='width:50px;height:50px'></div>\"></iframe>")
+        try await eventually("!!document.getElementById('f').contentDocument.getElementById('p')")
+        _ = try await js("document.getElementById('f').contentDocument.getElementById('p').requestFullscreen(); true")
+        try await eventually("document.fullscreenElement === document.getElementById('f') && Math.abs(document.getElementById('f').getBoundingClientRect().width - innerWidth) < 1")
+        _ = try await js("document.getElementById('f').contentDocument.exitFullscreen(); true")
+        try await eventually("!document.fullscreenElement && !document.getElementById('f').contentDocument.fullscreenElement")
+    }
+
+    func testBrowserIdentifiesAsSafariInDesktopAndMobileModes() async throws {
+        let desktopWebsites = Settings.shared.desktopWebsites
+        defer { Settings.shared.desktopWebsites = desktopWebsites }
+        Settings.shared.desktopWebsites = true
+        try await load("<p>desktop</p>")
+        let mac = try await js("navigator.userAgent") as? String ?? ""
+        XCTAssertTrue(mac.contains("(Macintosh;") && mac.hasSuffix("Version/\(BrowserEnvironment.safariVersion) Safari/605.1.15"), mac)
+        Settings.shared.desktopWebsites = false
+        try await load("<p>mobile</p>")
+        let phone = try await js("navigator.userAgent") as? String ?? ""
+        XCTAssertTrue(!phone.contains("Macintosh") && phone.hasSuffix("Version/\(BrowserEnvironment.safariVersion) Mobile/15E148 Safari/604.1"), phone)
+    }
+
     func testSingleClickOpensDesktopIconOnlyOnce() {
         let root = UIView(frame: CGRect(x: 0, y: 0, width: 500, height: 500))
         let icon = DesktopIconView(style: AppKind.browser.iconStyle, title: "Internet")

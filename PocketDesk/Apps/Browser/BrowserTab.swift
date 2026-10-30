@@ -46,9 +46,26 @@ enum BrowserEnvironment {
         Settings.shared.desktopWebsites ? .desktop : .mobile
     }
 
+    /// Safari's version is the iOS version it ships with.
+    static let safariVersion: String = {
+        let parts = UIDevice.current.systemVersion.split(separator: ".")
+        return "\(parts.first ?? "18").\(parts.count > 1 ? parts[1] : "0")"
+    }()
+
+    /// WKWebView leaves "Version/… Safari/…" out of its user agent (in desktop mode it sends only
+    /// "Mozilla/5.0 (Macintosh; …) AppleWebKit/605.1.15 (KHTML, like Gecko)"). Google then serves
+    /// its legacy pages and YouTube treats the browser as an unknown web view and sends an older
+    /// player build. Identify as Safari, like other iOS browsers do.
+    static var customUserAgent: String? {
+        guard Settings.shared.desktopWebsites else { return nil }
+        return "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/\(safariVersion) Safari/605.1.15"
+    }
+
     static func makeConfiguration() -> WKWebViewConfiguration {
         let configuration = WKWebViewConfiguration()
         configuration.userContentController = contentController
+        // Appended to WebKit's iPhone user agent in mobile mode, giving Safari's exact string.
+        configuration.applicationNameForUserAgent = "Version/\(safariVersion) Mobile/15E148 Safari/604.1"
         configuration.websiteDataStore = .default()
         // Without this, iPhone WebKit plays every video in the native fullscreen player.
         configuration.allowsInlineMediaPlayback = true
@@ -135,6 +152,7 @@ final class BrowserTab: NSObject {
         if #available(iOS 16.4, *) { webView.isInspectable = true }
         webView.navigationDelegate = owner
         webView.uiDelegate = owner
+        applyUserAgent()
         applyZoom()
         observations = [
             webView.observe(\.title, options: [.new]) { [weak self] _, _ in self?.changed() },
@@ -153,6 +171,13 @@ final class BrowserTab: NSObject {
 
     func applyZoom() {
         webView.pageZoom = zoom
+    }
+
+    /// Desktop mode needs a full custom user agent; mobile mode uses WebKit's own plus the
+    /// configuration's application name.
+    func applyUserAgent() {
+        let agent = BrowserEnvironment.customUserAgent ?? ""
+        if (webView.customUserAgent ?? "") != agent { webView.customUserAgent = agent.isEmpty ? nil : agent }
     }
 
     var displayTitle: String {
