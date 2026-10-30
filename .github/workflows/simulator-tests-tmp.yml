@@ -22,6 +22,11 @@ jobs:
           pro = [d for d in ds if "Pro" in d["name"]]
           print((pro or ds)[0]["udid"])')
           xcrun simctl list devices available | grep "$udid"
+          # Warm up WebKit in the freshly booted simulator; the first page load can take longer than a test waits.
+          xcodebuild test -project PocketDesk.xcodeproj -scheme PocketDesk \
+            -destination "id=$udid" -derivedDataPath build/sim \
+            CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- -parallel-testing-enabled NO \
+            -only-testing:PocketDeskTests/RegressionTests/testViewportFollowsWindowWidthAndUserZoomIgnoresChromeScale > warmup.log 2>&1 || true
           xcodebuild test -project PocketDesk.xcodeproj -scheme PocketDesk \
             -destination "id=$udid" -derivedDataPath build/sim \
             CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- -parallel-testing-enabled NO \
