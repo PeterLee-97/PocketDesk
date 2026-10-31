@@ -13,7 +13,9 @@ with tempfile.TemporaryDirectory(prefix='pocketdesk-') as folder:
     phones = [d for d in devices
               if d.get('hardwareProperties', {}).get('reality') == 'physical'
               and d.get('hardwareProperties', {}).get('deviceType') == 'iPhone'
-              and d.get('connectionProperties', {}).get('tunnelState') == 'connected']
+              and d.get('connectionProperties', {}).get('pairingState') == 'paired'
+              # An idle tunnel reads 'disconnected'; xcodebuild and devicectl reopen it on demand.
+              and d.get('connectionProperties', {}).get('tunnelState') != 'unavailable']
     if len(phones) != 1:
         raise SystemExit('설치할 아이폰 1대를 연결하고 잠금을 해제해 주세요.')
     print(phones[0]['hardwareProperties']['udid'])
